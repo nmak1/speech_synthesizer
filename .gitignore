@@ -1,0 +1,60 @@
+# .gitignore
+# Файлы PyCharm
+.idea/
+*.iml
+.DS_Store
+
+# Файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Виртуальное окружение
+venv/
+.virtualenv/
+
+# Файлы сборки
+build/
+dist/
+*.egg-info/
+*.egg
+*.spec
+
+# Логи и данные пользователя
+data/logs/
+data/user_data/
+data/dictionaries/*.json
+!data/dictionaries/t9_dictionary.json
+
+# Установщики
+installers/*.exe
+installers/*.zip
+!installers/setup_script.iss
+
+# Временные файлы
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# Файлы тестов
+test_*.py
+!test_*.py
+
+# Файлы отладки
+check_*.py
+create_*.py
+build_*.bat
+quick_*.bat
+
+# OS specific
+Thumbs.db
+Desktop.ini

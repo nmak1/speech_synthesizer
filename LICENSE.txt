@@ -1,0 +1,16 @@
+Voice Synthesizer - Голосовой синтезатор
+Copyright © 2024 Voice Synthesizer Team
+
+Все права защищены.
+
+Данное программное обеспечение предоставляется "как есть" без каких-либо гарантий.
+Авторы не несут ответственности за любой ущерб, возникший в результате использования
+данного программного обеспечения.
+
+Используемые библиотеки:
+- PyQt5 (GPL v3)
+- PyTorch (BSD-style license)
+- Silero TTS (MIT license)
+- NLTK (Apache 2.0)
+- sounddevice (MIT license)
+- soundfile (BSD 3-Clause)

@@ -1,0 +1,13 @@
+# requirements.txt
+PyQt5==5.15.9
+torch==2.5.0
+torchaudio==2.5.0
+numpy==1.26.4
+sounddevice==0.4.7
+soundfile==0.12.1
+nltk==3.8.1
+pyphen==0.15.0
+pydub==0.25.1
+requests==2.32.0
+python-dotenv==1.0.1
+pyinstaller==6.10.0
