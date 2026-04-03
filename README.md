@@ -122,7 +122,7 @@ pip install -r requirements.txt
 
 # Запуск программы
 python main.py
-
+```
 🚀 Использование
 Быстрый старт
 Выберите голос из выпадающего списка в верхней панели
@@ -163,7 +163,7 @@ python main.py
 
 📁 Структура проекта
 
-text
+```text
 voice-synthesizer/
 │
 ├── main.py                      # Точка входа
@@ -205,7 +205,7 @@ voice-synthesizer/
 │
 └── installers/                   # Установщики
     └── setup\_script.iss          # Скрипт Inno Setup
-
+```
 🔧 Технические детали   
 
 Используемые технологии   
@@ -283,8 +283,9 @@ NLTK - обработка естественного языка
 
 🛠️ Разработка
 Установка для разработки
-bash
+
 # Клонирование
+```bash
 git clone https://github.com/nmak1/voice-synthesizer.git
 cd voice-synthesizer
 
@@ -298,13 +299,16 @@ pip install -r requirements.txt
 
 # Запуск в режиме разработки
 python main.py
+```
 Сборка EXE
-bash
+```bash
 # Установка PyInstaller
 pip install pyinstaller
-
+```
 # Сборка
+```bash
 pyinstaller --onefile --windowed --name VoiceSynthesizer --add-data "data;data" main.py
+```
 Создание установщика
 Установите Inno Setup
 
