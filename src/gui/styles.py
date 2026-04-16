@@ -1,7 +1,4 @@
 # src/gui/styles.py
-"""
-CSS стили для приложения
-"""
 MAIN_STYLE = """
 QMainWindow {
     background-color: #f5f5f5;
@@ -48,14 +45,6 @@ QComboBox:hover {
 
 QComboBox::drop-down {
     border: none;
-}
-
-QComboBox::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 4px solid #666;
-    margin-right: 5px;
 }
 
 QTextEdit {

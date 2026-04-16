@@ -1,19 +1,14 @@
 # src/gui/text_editor.py
-"""
-Редактор текста с поддержкой форматирования и панелью инструментов
-"""
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QToolBar,
     QFontComboBox, QComboBox, QPushButton, QColorDialog,
-    QHBoxLayout, QAction  # QAction теперь из QtWidgets
+    QHBoxLayout, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QTextCharFormat, QColor
+from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor
 
 
 class TextEditor(QWidget):
-    """Виджет текстового редактора с форматированием"""
-
     text_changed = pyqtSignal()
 
     def __init__(self, config, on_text_changed=None):
@@ -25,7 +20,6 @@ class TextEditor(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        """Инициализация интерфейса редактора"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
@@ -83,24 +77,48 @@ class TextEditor(QWidget):
         # Установка начальных параметров
         self.set_font(self.config.default_font, self.config.default_font_size)
 
-    def change_font(self, font: QFont):
-        """Изменение шрифта"""
-        self.text_edit.setCurrentFont(font)
+    def get_current_format(self):
+        """Получение текущего формата текста"""
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            return cursor.charFormat()
+        else:
+            return self.text_edit.currentCharFormat()
+
+    def change_font(self, font):
+        """Изменение шрифта для выделенного текста или текущей позиции"""
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            # Применяем к выделенному тексту
+            format = QTextCharFormat()
+            format.setFont(font)
+            cursor.mergeCharFormat(format)
+        else:
+            # Применяем для будущего текста
+            self.text_edit.setCurrentFont(font)
         self.text_edit.setFocus()
 
-    def change_font_size(self, size_str: str):
-        """Изменение размера шрифта"""
+    def change_font_size(self, size_str):
+        """Изменение размера шрифта для выделенного текста"""
         try:
             size = int(size_str)
-            self.text_edit.setFontPointSize(size)
+            cursor = self.text_edit.textCursor()
+            if cursor.hasSelection():
+                # Применяем к выделенному тексту
+                format = QTextCharFormat()
+                format.setFontPointSize(size)
+                cursor.mergeCharFormat(format)
+            else:
+                # Применяем для будущего текста
+                self.text_edit.setFontPointSize(size)
             self.text_edit.setFocus()
         except:
             pass
 
-    def set_font(self, font_name: str, font_size: int):
+    def set_font(self, font_name, font_size):
         """Установка шрифта для всего текста"""
-        font = QFont(font_name, font_size)
         self.text_edit.selectAll()
+        font = QFont(font_name, font_size)
         self.text_edit.setCurrentFont(font)
         self.text_edit.setFontPointSize(font_size)
         cursor = self.text_edit.textCursor()
@@ -108,10 +126,18 @@ class TextEditor(QWidget):
         self.text_edit.setTextCursor(cursor)
 
     def toggle_bold(self):
-        """Переключение жирного начертания"""
-        fmt = QTextCharFormat()
-        fmt.setFontWeight(QFont.Bold if self.bold_btn.isChecked() else QFont.Normal)
-        self.text_edit.mergeCurrentCharFormat(fmt)
+        """Переключение жирного начертания для выделенного текста"""
+        cursor = self.text_edit.textCursor()
+        if cursor.hasSelection():
+            # Применяем к выделенному тексту
+            format = QTextCharFormat()
+            format.setFontWeight(QFont.Bold if self.bold_btn.isChecked() else QFont.Normal)
+            cursor.mergeCharFormat(format)
+        else:
+            # Применяем для будущего текста
+            fmt = self.text_edit.currentCharFormat()
+            fmt.setFontWeight(QFont.Bold if self.bold_btn.isChecked() else QFont.Normal)
+            self.text_edit.setCurrentCharFormat(fmt)
         self.text_edit.setFocus()
 
     def choose_color(self):
@@ -120,27 +146,29 @@ class TextEditor(QWidget):
         if color.isValid():
             self.set_text_color(color.name())
 
-    def set_text_color(self, color_hex: str):
-        """Установка цвета текста"""
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color_hex))
-        self.text_edit.mergeCurrentCharFormat(fmt)
+    def set_text_color(self, color_hex):
+        """Установка цвета текста для выделенного фрагмента"""
+        cursor = self.text_edit.textCursor()
+        format = QTextCharFormat()
+        format.setForeground(QColor(color_hex))
+
+        if cursor.hasSelection():
+            cursor.mergeCharFormat(format)
+        else:
+            self.text_edit.setCurrentCharFormat(format)
         self.text_edit.setFocus()
 
     def on_text_changed(self):
-        """Обработчик изменения текста"""
         self.text_changed.emit()
 
-    def get_text(self) -> str:
-        """Получение текста из редактора"""
+    def get_text(self):
         return self.text_edit.toPlainText()
 
-    def set_text(self, text: str):
-        """Установка текста в редактор"""
+    def set_text(self, text):
         self.text_edit.setPlainText(text)
 
-    def set_zoom(self, zoom_value: int):
+    def set_zoom(self, zoom_value):
         """Установка масштаба текста"""
         base_size = self.config.default_font_size
-        new_size = base_size * zoom_value / 100
-        self.text_edit.setFontPointSize(max(6, min(72, new_size)))
+        new_size = max(6, min(72, base_size * zoom_value / 100))
+        self.text_edit.setFontPointSize(new_size)

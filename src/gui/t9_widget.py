@@ -1,19 +1,13 @@
 # src/gui/t9_widget.py
-"""
-Виджет для отображения предсказаний T9
-"""
 from PyQt5.QtWidgets import (
-    QWidget, QHBoxLayout, QPushButton, QFrame,
-    QVBoxLayout, QLabel
+    QWidget, QHBoxLayout, QPushButton, QVBoxLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtCore import Qt, pyqtSignal
 
 
 class T9Widget(QWidget):
-    """Виджет для отображения предсказаний T9"""
-
     word_selected = pyqtSignal(str)
+    punctuation_selected = pyqtSignal(str)  # Новый сигнал для знаков препинания
 
     def __init__(self, config, on_word_selected=None):
         super().__init__()
@@ -27,22 +21,24 @@ class T9Widget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        """Инициализация интерфейса"""
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(5)
+
+        # Верхняя панель с T9 и знаками препинания
+        top_layout = QHBoxLayout()
 
         # Кнопка Toggle для включения/выключения T9
         self.toggle_btn = QPushButton("T9")
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.setChecked(self.enabled)
-        self.toggle_btn.setFixedSize(60, 50)
+        self.toggle_btn.setFixedSize(60, 40)
         self.toggle_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f0f0f0;
                 border: 2px solid #cccccc;
                 border-radius: 5px;
-                font-size: 16px;
+                font-size: 14px;
                 font-weight: bold;
             }
             QPushButton:checked {
@@ -55,7 +51,30 @@ class T9Widget(QWidget):
             }
         """)
         self.toggle_btn.clicked.connect(self.toggle_t9)
-        layout.addWidget(self.toggle_btn)
+        top_layout.addWidget(self.toggle_btn)
+
+        # Кнопки знаков препинания
+        punctuation_btns = [",", ".", "!", "?", "...", ";", ":", "(", ")"]
+        for punc in punctuation_btns:
+            btn = QPushButton(punc)
+            btn.setFixedSize(45, 40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #e0e0e0;
+                    border: 1px solid #bdbdbd;
+                    border-radius: 5px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #d0d0d0;
+                }
+            """)
+            btn.clicked.connect(lambda checked, p=punc: self.on_punctuation_clicked(p))
+            top_layout.addWidget(btn)
+
+        top_layout.addStretch()
+        main_layout.addLayout(top_layout)
 
         # Контейнер для кнопок предсказаний
         self.suggestions_container = QWidget()
@@ -67,13 +86,13 @@ class T9Widget(QWidget):
         self.suggestion_buttons = []
         for i in range(5):
             btn = QPushButton("")
-            btn.setFixedSize(120, 50)
+            btn.setFixedSize(130, 40)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: white;
                     border: 2px solid #2196F3;
                     border-radius: 5px;
-                    font-size: 14px;
+                    font-size: 12px;
                     font-weight: bold;
                     color: #333333;
                 }
@@ -92,54 +111,47 @@ class T9Widget(QWidget):
         self.suggestions_layout.addStretch()
 
         self.suggestions_container.setVisible(self.enabled)
-        layout.addWidget(self.suggestions_container)
-        layout.addStretch()
+        main_layout.addWidget(self.suggestions_container)
 
-    def toggle_t9(self, checked: bool):
-        """Включение/выключение T9"""
+    def on_punctuation_clicked(self, punctuation: str):
+        """Обработчик нажатия на знак препинания - просто вставляем символ"""
+        self.word_selected.emit(punctuation)
+
+    def toggle_t9(self, checked):
         self.enabled = checked
         self.suggestions_container.setVisible(checked)
 
         if not checked:
             self.update_suggestions([])
 
-    def update_suggestions(self, suggestions: list):
-        """Обновление списка предсказаний"""
+    def update_suggestions(self, suggestions):
         self.suggestions = suggestions[:5]
-
-        # Логируем для отладки
-        from src.utils.logger import get_logger
-        logger = get_logger()
-        logger.debug(f"T9 Widget обновлен: {self.suggestions}")
 
         for i, btn in enumerate(self.suggestion_buttons):
             if i < len(self.suggestions):
-                btn.setText(self.suggestions[i])
+                word = self.suggestions[i]
+                if len(word) > 15:
+                    word = word[:12] + "..."
+                btn.setText(word)
                 btn.setEnabled(True)
                 btn.setVisible(True)
+                btn.setToolTip(self.suggestions[i])
             else:
                 btn.setText("")
                 btn.setEnabled(False)
                 btn.setVisible(False)
 
-    def on_button_clicked(self, index: int):
-        """Обработчик нажатия на кнопку предсказания"""
+    def on_button_clicked(self, index):
         if index < len(self.suggestions):
-            selected_word = self.suggestions[index]
-            self.word_selected.emit(selected_word)
-            # Очищаем предсказания после выбора
-            self.update_suggestions([])
+            self.word_selected.emit(self.suggestions[index])
 
-    def is_enabled(self) -> bool:
-        """Возвращает состояние T9"""
+    def is_enabled(self):
         return self.enabled
 
     def enable(self):
-        """Включить T9"""
         self.toggle_btn.setChecked(True)
         self.toggle_t9(True)
 
     def disable(self):
-        """Выключить T9"""
         self.toggle_btn.setChecked(False)
         self.toggle_t9(False)
