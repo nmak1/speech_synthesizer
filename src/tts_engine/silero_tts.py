@@ -186,3 +186,10 @@ class SileroTTS:
             return audio[indices]
         except:
             return audio
+
+    def cleanup(self):
+        """Очистка ресурсов TTS движка"""
+        if hasattr(self, '_model'):
+            del self._model
+        if hasattr(self, '_player'):
+            self._player.stop()

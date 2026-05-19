@@ -1,7 +1,4 @@
 # src/gui/main_window.py
-"""
-Главное окно приложения Free Talk
-"""
 import os
 import sys
 import threading
@@ -9,10 +6,10 @@ from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QStatusBar, QMessageBox, QLabel, QFrame  # Добавлен QFrame
+    QSplitter, QStatusBar, QMessageBox, QLabel, QFrame, QApplication
 )
-from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QFont, QIcon, QPixmap
+from PyQt5.QtCore import Qt, QSettings, QTimer
+from PyQt5.QtGui import QIcon, QPixmap
 
 from src.gui.text_editor import TextEditor
 from src.gui.tts_controls import TTSControls
@@ -26,367 +23,308 @@ from src.utils.config_manager import ConfigManager
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_manager: ConfigManager, config):
+    def __init__(self, config_manager, config):
         super().__init__()
         self.config_manager = config_manager
         self.config = config
         self.logger = get_logger()
-
         self.tts_engine = None
         self.t9_predictor = None
+        self._synthesis_lock = threading.Lock()
+        self._is_zooming = False
 
         self.init_ui()
         self.init_components()
         self.load_settings()
 
-    def create_logo_label(self):
-        """Создание метки с логотипом - принудительное масштабирование"""
-        logo_path = "logo.png"
+    def get_resource_path(self, relative_path):
+        """Получение правильного пути к файлам (для разработки и скомпилированной версии)"""
+        try:
+            # PyInstaller создает временную папку и хранит путь в _MEIPASS
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
 
-        if os.path.exists(logo_path):
-            try:
-                # Загружаем оригинал
-                original_pixmap = QPixmap(logo_path)
-                if not original_pixmap.isNull():
-                    # Принудительно масштабируем до 180x140
-                    scaled_pixmap = original_pixmap.scaled(
-                        180, 140,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
-                    )
-
-                    logo_label = QLabel()
-                    logo_label.setPixmap(scaled_pixmap)
-                    logo_label.setFixedSize(180, 140)
-                    logo_label.setScaledContents(True)  # Важно! Принудительное масштабирование
-                    logo_label.setToolTip("Free Talk")
-                    logo_label.setAlignment(Qt.AlignCenter)
-                    logo_label.setStyleSheet("""
-                        QLabel {
-                            background-color: #f8f9fa;
-                            border: 1px solid #e0e0e0;
-                            border-radius: 5px;
-                        }
-                    """)
-
-                    self.logger.info(f"Логотип загружен: {logo_path} -> 180x140")
-                    return logo_label
-            except Exception as e:
-                self.logger.error(f"Ошибка загрузки логотипа: {e}")
-
-        # Если нет логотипа, создаем текстовую метку
-        logo_label = QLabel("Free Talk")
-        logo_label.setFixedSize(180, 140)
-        logo_label.setAlignment(Qt.AlignCenter)
-        logo_label.setStyleSheet("""
-            QLabel {
-                background-color: #4CAF50;
-                color: white;
-                font-size: 18px;
-                font-weight: bold;
-                border-radius: 5px;
-            }
-        """)
-        return logo_label
+        return os.path.join(base_path, relative_path)
 
     def init_ui(self):
-        """Инициализация пользовательского интерфейса"""
-        self.setWindowTitle(f"Free Talk - Голосовой синтезатор v{self.config.app_version}")
+        self.setWindowTitle("Free Talk - Голосовой синтезатор")
         self.setMinimumSize(1200, 800)
 
-        # Установка иконки приложения
-        if os.path.exists("logo.ico"):
-            self.setWindowIcon(QIcon("logo.ico"))
-        elif os.path.exists("logo.png"):
-            self.setWindowIcon(QIcon("logo.png"))
+        # Загрузка иконки для окна
+        icon = QIcon()
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # Пути для поиска иконки
+        search_paths = [
+            # Путь для скомпилированной версии
+            self.get_resource_path("logo.ico"),
+            self.get_resource_path("logo.png"),
+            self.get_resource_path("logo_big.png"),
+            self.get_resource_path("imeg/logo.ico"),
+            self.get_resource_path("imeg/logo.png"),
+            self.get_resource_path("imeg/logo_big.png"),
+            self.get_resource_path("imeg/logo_highres.png"),
+            # Пути для установленной версии (Program Files)
+            os.path.join(os.path.dirname(sys.executable), "logo.ico"),
+            os.path.join(os.path.dirname(sys.executable), "logo.png"),
+            os.path.join(os.path.dirname(sys.executable), "logo_big.png"),
+            os.path.join(os.path.dirname(sys.executable), "imeg", "logo.ico"),
+            os.path.join(os.path.dirname(sys.executable), "imeg", "logo.png"),
+            # Локальные пути для разработки
+            "logo.ico",
+            "logo.png",
+            "logo_big.png",
+            "imeg/logo.ico",
+            "imeg/logo.png",
+            "imeg/logo_big.png",
+            "imeg/logo_highres.png",
+        ]
 
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        icon_loaded = False
+        for path in search_paths:
+            if os.path.exists(path):
+                pixmap = QPixmap(path)
+                if not pixmap.isNull():
+                    # Добавляем несколько размеров для лучшего отображения
+                    for size in [16, 24, 32, 48, 64, 128, 256]:
+                        scaled = pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        icon.addPixmap(scaled)
+                    self.setWindowIcon(icon)
+                    self.logger.info(f"Иконка окна загружена: {path}")
+                    icon_loaded = True
+                    break
 
-        # Верхняя панель - делаем её выше для большого логотипа
-        top_panel = QWidget()
-        top_panel.setFixedHeight(150)
-        top_panel.setMinimumHeight(150)
-        top_panel.setMaximumHeight(150)
-        top_panel.setStyleSheet("""
-            QWidget {
-                background-color: #f8f9fa;
-                border-bottom: 2px solid #e0e0e0;
-            }
-        """)
-        top_layout = QHBoxLayout(top_panel)
-        top_layout.setContentsMargins(5, 5, 5, 5)
-        top_layout.setSpacing(10)
+        if not icon_loaded:
+            self.logger.warning("Иконка окна не найдена, используется стандартная")
+            # Пробуем установить иконку через стиль Windows
+            try:
+                import ctypes
+                myappid = 'freetalk.synthesizer.version1.0'
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except:
+                pass
 
-        # Добавляем логотип
-        logo_label = self.create_logo_label()
-        if logo_label:
-            top_layout.addWidget(logo_label, 0)
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(10, 10, 10, 10)
 
-        # Добавляем разделитель
-        separator = QFrame()
-        separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        separator.setFixedWidth(3)
-        separator.setFixedHeight(120)
-        separator.setStyleSheet("background-color: #cccccc;")
-        top_layout.addWidget(separator)
+        # Верхняя панель с логотипом
+        top = QWidget()
+        top.setFixedHeight(220)
+        top.setStyleSheet("background-color: #f8f9fa; border-bottom: 2px solid #e0e0e0;")
+        top_layout = QHBoxLayout(top)
 
-        # Панель управления TTS
+        # Логотип в верхней панели
+        logo_label = QLabel()
+
+        # Пути для логотипа
+        logo_paths = [
+            self.get_resource_path("logo_big.png"),
+            self.get_resource_path("imeg/logo_big.png"),
+            self.get_resource_path("imeg/logo_highres.png"),
+            os.path.join(os.path.dirname(sys.executable), "logo_big.png"),
+            os.path.join(os.path.dirname(sys.executable), "imeg", "logo_big.png"),
+            "logo_big.png",
+            "imeg/logo_big.png",
+            "imeg/logo_highres.png",
+        ]
+
+        logo_found = False
+        for path in logo_paths:
+            if os.path.exists(path):
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    scaled = pix.scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    logo_label.setPixmap(scaled)
+                    logo_found = True
+                    self.logger.info(f"Логотип загружен: {path}")
+                    break
+
+        if not logo_found:
+            logo_label.setText("FREE TALK")
+            logo_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #4CAF50;")
+
+        logo_label.setFixedSize(200, 200)
+        logo_label.setAlignment(Qt.AlignCenter)
+        top_layout.addWidget(logo_label)
+
+        # Разделитель
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedHeight(170)
+        sep.setStyleSheet("background-color: #cccccc;")
+        top_layout.addWidget(sep)
+
+        # Кнопки управления
         self.tts_controls = TTSControls(self.config, self.on_voice_changed)
         top_layout.addWidget(self.tts_controls, 1)
 
-        main_layout.addWidget(top_panel)
-
-        # Горизонтальный сплиттер для редактора
-        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(top)
 
         # Редактор текста
+        splitter = QSplitter(Qt.Horizontal)
         self.text_editor = TextEditor(self.config, self.on_text_changed)
         splitter.addWidget(self.text_editor)
-
-        # Правая панель (можно добавить дополнительные настройки)
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        splitter.addWidget(right_panel)
-
+        splitter.addWidget(QWidget())
         splitter.setSizes([700, 200])
-        main_layout.addWidget(splitter)
+        layout.addWidget(splitter)
 
-        # Панель T9
+        # T9
         self.t9_widget = T9Widget(self.config, self.on_t9_word_selected)
-        main_layout.addWidget(self.t9_widget)
+        layout.addWidget(self.t9_widget)
 
-        # Нижняя панель с зум-слайдером
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addStretch()
-
-        self.zoom_slider = ZoomSlider(
-            self.config.default_zoom,
-            self.config.min_zoom,
-            self.config.max_zoom,
-            self.on_zoom_changed
-        )
-        bottom_layout.addWidget(self.zoom_slider)
-
-        main_layout.addLayout(bottom_layout)
+        # Зум-слайдер
+        bottom = QHBoxLayout()
+        bottom.addStretch()
+        self.zoom_slider = ZoomSlider(self.config.default_zoom, 50, 400, self.on_zoom_changed)
+        self.zoom_slider.zoom_finished.connect(self.on_zoom_finished)
+        bottom.addWidget(self.zoom_slider)
+        layout.addLayout(bottom)
 
         # Статус бар
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Готов к работе")
-
-        # Применяем стили
         self.setStyleSheet(MAIN_STYLE)
 
     def init_components(self):
-        """Инициализация рабочих компонентов"""
         try:
-            self.logger.info("Инициализация TTS движка...")
             self.tts_engine = SileroTTS(self.config)
-            self.status_bar.showMessage("TTS движок загружен")
-
-            self.logger.info("Инициализация T9 предсказателя...")
             self.t9_predictor = T9Predictor(self.config)
-
-            # Подключаем сигналы
             self.tts_controls.speak_requested.connect(self.on_speak)
             self.tts_controls.download_requested.connect(self.on_download)
-
+            self.status_bar.showMessage("TTS движок загружен")
         except Exception as e:
-            self.logger.error(f"Ошибка инициализации компонентов: {e}")
-            self.status_bar.showMessage(f"Ошибка: {e}")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось инициализировать компоненты:\n{str(e)}")
+            self.logger.error(f"Ошибка: {e}")
+            QMessageBox.critical(self, "Ошибка", str(e))
 
-    def on_voice_changed(self, voice_name: str):
-        """Обработчик смены голоса"""
-        self.logger.info(f"Выбран голос: {voice_name}")
+    def on_voice_changed(self, voice):
         if self.tts_engine:
-            self.tts_engine.set_voice(voice_name)
-            self.status_bar.showMessage(f"Выбран голос: {voice_name}")
+            self.tts_engine.set_voice(voice)
 
     def on_text_changed(self):
-        """Обработчик изменения текста"""
-        if not self.t9_widget:
-            return
-
         text = self.text_editor.get_text()
-        if self.t9_widget.is_enabled() and text:
+        if self.t9_widget and self.t9_widget.is_enabled() and text:
             words = text.split()
             if words:
-                last_word = words[-1]
-                if self.t9_predictor:
-                    predictions = self.t9_predictor.predict(last_word)
-                    self.t9_widget.update_suggestions(predictions)
-                else:
-                    self.t9_widget.update_suggestions([])
-            else:
-                self.t9_widget.update_suggestions([])
-        else:
-            self.t9_widget.update_suggestions([])
+                predictions = self.t9_predictor.predict(words[-1])
+                self.t9_widget.update_suggestions(predictions)
 
-    def on_t9_word_selected(self, word: str):
-        """Обработчик выбора слова из T9"""
-        current_text = self.text_editor.get_text()
-        words = current_text.split()
-
+    def on_t9_word_selected(self, word):
+        text = self.text_editor.get_text()
+        words = text.split()
         if words:
             words[-1] = word
-            new_text = " ".join(words)
-            self.text_editor.set_text(new_text)
+            self.text_editor.set_text(" ".join(words))
         else:
             self.text_editor.set_text(word)
 
-    def on_zoom_changed(self, zoom_value: int):
-        """Обработчик изменения масштаба"""
-        self.text_editor.set_zoom(zoom_value)
-        self.config.default_zoom = zoom_value
-        self.config_manager.save_config(self.config)
-        self.status_bar.showMessage(f"Масштаб: {zoom_value}%")
+    def on_zoom_changed(self, value):
+        self._is_zooming = True
+        try:
+            self.text_editor.set_zoom(value)
+            self.config.default_zoom = value
+            self.config_manager.save_config(self.config)
+            QApplication.processEvents()
+        finally:
+            pass
+
+    def on_zoom_finished(self):
+        self._is_zooming = False
+        if self.text_editor and hasattr(self.text_editor, 'setFocus'):
+            self.text_editor.setFocus()
+        QApplication.processEvents()
+        self.status_bar.showMessage("Масштаб изменен", 2000)
 
     def on_speak(self):
-        """Обработка озвучивания"""
-        if not self.tts_engine:
-            self.status_bar.showMessage("TTS движок не загружен")
-            QMessageBox.warning(self, "Ошибка", "TTS движок не загружен")
-            self.tts_controls.enable_buttons()
+        if not self._synthesis_lock.acquire(blocking=False):
+            self.status_bar.showMessage("Синтез уже выполняется")
             return
 
         text = self.text_editor.get_text()
-        if not text or not text.strip():
-            self.status_bar.showMessage("Введите текст для озвучивания")
-            QMessageBox.warning(self, "Внимание", "Пожалуйста, введите текст для озвучивания")
+        if not text.strip():
+            self._synthesis_lock.release()
             self.tts_controls.enable_buttons()
             return
 
-        self.logger.info(f"Озвучивание текста: {text[:100]}...")
         self.status_bar.showMessage("Синтез речи...")
         speed = self.tts_controls.get_speed()
 
-        def synthesize_and_play():
+        def task():
             try:
                 audio = self.tts_engine.synthesize(text, speed)
-
                 if audio is not None:
-                    self.logger.info(f"Аудио синтезировано, длина: {len(audio)} samples")
-                    self.status_bar.showMessage("Воспроизведение...")
                     self.tts_engine.play(audio)
                     self.status_bar.showMessage("Готово")
-                else:
-                    error_msg = "Ошибка синтеза речи"
-                    self.logger.error(error_msg)
-                    self.status_bar.showMessage(error_msg)
-                    QMessageBox.warning(self, "Ошибка",
-                                        "Не удалось синтезировать речь.\nПроверьте текст и попробуйте снова.")
-
             except Exception as e:
-                error_msg = f"Ошибка: {str(e)}"
-                self.logger.error(error_msg)
-                self.status_bar.showMessage(error_msg)
-                QMessageBox.critical(self, "Ошибка", error_msg)
+                self.logger.error(f"Ошибка синтеза: {e}")
+                self.status_bar.showMessage("Ошибка синтеза")
             finally:
-                self.tts_controls.enable_buttons()
+                self._synthesis_lock.release()
+                QTimer.singleShot(0, self.tts_controls.enable_buttons)
 
-        thread = threading.Thread(target=synthesize_and_play, daemon=True)
-        thread.start()
+        threading.Thread(target=task, daemon=True).start()
 
     def on_download(self):
-        """Обработка сохранения"""
-        if not self.tts_engine:
-            self.status_bar.showMessage("TTS движок не загружен")
-            QMessageBox.warning(self, "Ошибка", "TTS движок не загружен")
-            self.tts_controls.enable_buttons()
+        if not self._synthesis_lock.acquire(blocking=False):
+            self.status_bar.showMessage("Синтез уже выполняется")
             return
 
         text = self.text_editor.get_text()
-        if not text or not text.strip():
-            self.status_bar.showMessage("Введите текст для сохранения")
-            QMessageBox.warning(self, "Внимание", "Пожалуйста, введите текст для сохранения")
+        if not text.strip():
+            self._synthesis_lock.release()
             self.tts_controls.enable_buttons()
             return
 
-        self.logger.info(f"Сохранение текста: {text[:100]}...")
         self.status_bar.showMessage("Синтез для сохранения...")
         speed = self.tts_controls.get_speed()
 
-        def synthesize_and_save():
+        def task():
+            audio = None
             try:
                 audio = self.tts_engine.synthesize(text, speed)
-
                 if audio is not None:
-                    filename = f"FreeTalk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
                     download_dir = os.path.expanduser("~/Downloads/FreeTalk")
                     os.makedirs(download_dir, exist_ok=True)
+
+                    filename = f"FreeTalk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
                     filepath = os.path.join(download_dir, filename)
 
-                    if self.tts_engine.save_to_file(audio, filepath):
-                        success_msg = f"Аудио сохранено: {filename}"
-                        self.logger.info(success_msg)
-                        self.status_bar.showMessage(success_msg)
-                        QMessageBox.information(self, "Успешно", f"Аудио сохранено в:\n{filepath}")
+                    success = self.tts_engine.save_to_file(audio, filepath)
+
+                    if success:
+                        self.status_bar.showMessage(f"Сохранено: {filename}")
+                        QTimer.singleShot(0, lambda: QMessageBox.information(
+                            self, "Успешно", f"Аудио сохранено в:\n{filepath}"
+                        ))
                     else:
-                        error_msg = "Ошибка сохранения файла"
-                        self.logger.error(error_msg)
-                        self.status_bar.showMessage(error_msg)
-                        QMessageBox.warning(self, "Ошибка", "Не удалось сохранить аудио файл")
+                        self.status_bar.showMessage("Ошибка сохранения")
                 else:
-                    error_msg = "Ошибка синтеза речи"
-                    self.logger.error(error_msg)
-                    self.status_bar.showMessage(error_msg)
-                    QMessageBox.warning(self, "Ошибка", "Не удалось синтезировать речь")
+                    self.status_bar.showMessage("Ошибка синтеза")
 
             except Exception as e:
-                error_msg = f"Ошибка: {str(e)}"
-                self.logger.error(error_msg)
-                self.status_bar.showMessage(error_msg)
-                QMessageBox.critical(self, "Ошибка", error_msg)
+                self.logger.error(f"Ошибка при скачивании: {e}")
+                self.status_bar.showMessage("Ошибка")
             finally:
-                self.tts_controls.enable_buttons()
+                self._synthesis_lock.release()
+                QTimer.singleShot(0, self.tts_controls.enable_buttons)
+                if audio is not None:
+                    del audio
 
-        thread = threading.Thread(target=synthesize_and_save, daemon=True)
-        thread.start()
+        threading.Thread(target=task, daemon=True).start()
 
     def load_settings(self):
-        """Загрузка сохраненных настроек"""
         settings = QSettings("FreeTalk", "App")
-
-        last_voice = settings.value("last_voice", self.config.available_voices[0])
-        if isinstance(last_voice, str):
-            self.tts_controls.set_current_voice(last_voice)
-            self.on_voice_changed(last_voice)
-
-        zoom = settings.value("zoom", self.config.default_zoom, type=int)
+        voice = settings.value("last_voice", "aidar")
+        self.tts_controls.set_current_voice(voice)
+        zoom = settings.value("zoom", 100, type=int)
         self.zoom_slider.set_value(zoom)
-        self.on_zoom_changed(zoom)
-
-        t9_enabled = settings.value("t9_enabled", False, type=bool)
-        if t9_enabled and self.t9_widget:
-            self.t9_widget.enable()
-
-    def keyPressEvent(self, event):
-        """Обработка нажатий клавиш - предотвращаем аварийное закрытие"""
-        event.ignore()
 
     def closeEvent(self, event):
-        """Обработка закрытия окна"""
-        reply = QMessageBox.question(
-            self, 'Выход',
-            'Вы уверены, что хотите выйти из Free Talk?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            settings = QSettings("FreeTalk", "App")
-            settings.setValue("last_voice", self.tts_controls.get_current_voice())
-            settings.setValue("zoom", self.zoom_slider.get_value())
-            settings.setValue("t9_enabled", self.t9_widget.is_enabled() if self.t9_widget else False)
-
-            self.logger.info("Приложение Free Talk закрыто")
-            event.accept()
-        else:
-            event.ignore()
+        settings = QSettings("FreeTalk", "App")
+        settings.setValue("last_voice", self.tts_controls.get_current_voice())
+        settings.setValue("zoom", self.zoom_slider.get_value())
+        if hasattr(self.tts_engine, 'cleanup'):
+            self.tts_engine.cleanup()
+        event.accept()

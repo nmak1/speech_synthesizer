@@ -1,4 +1,4 @@
-# main.py - обновленная версия для работы с PNG
+# main.py - исправленная версия с поддержкой иконок
 import sys
 import os
 
@@ -18,17 +18,55 @@ def main():
 
     app = QApplication(sys.argv)
 
-    # Установка иконки приложения (поддерживает PNG)
-    if os.path.exists("logo.png"):
-        icon = QIcon()
-        icon.addPixmap(QPixmap("logo.png"))
+    # Устанавливаем имя приложения
+    app.setApplicationName("FreeTalk")
+    app.setOrganizationName("FreeTalk")
+
+    # Создаем иконку с несколькими размерами для лучшего отображения
+    icon = QIcon()
+
+    # Пути к иконкам (поиск в разных местах)
+    icon_paths = [
+        # Основные пути
+        "logo.ico",
+        "logo.png",
+        "logo_big.png",
+        # Пути из папки imeg
+        "imeg/logo.ico",
+        "imeg/logo.png",
+        "imeg/logo_big.png",
+        "imeg/logo_highres.png",
+        # Пути из installers (для скомпилированной версии)
+        os.path.join(os.path.dirname(sys.executable), "logo.ico"),
+        os.path.join(os.path.dirname(sys.executable), "logo.png"),
+    ]
+
+    icon_found = False
+    for path in icon_paths:
+        if os.path.exists(path):
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                # Добавляем разные размеры иконки
+                for size in [16, 32, 48, 64, 128, 256]:
+                    scaled = pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    icon.addPixmap(scaled)
+                icon_found = True
+                print(f"[OK] Иконка загружена: {path}")
+                break
+
+    if icon_found:
         app.setWindowIcon(icon)
-        print("✓ Логотип загружен: logo.png")
-    elif os.path.exists("logo.ico"):
-        app.setWindowIcon(QIcon("logo.ico"))
-        print("✓ Логотип загружен: logo.ico")
     else:
-        print("⚠ Логотип не найден, используется стандартная иконка")
+        print("[WARN] Иконка не найдена, используется стандартная")
+
+    # Создаем временный QWidget для установки иконки через стиль (Windows)
+    try:
+        import ctypes
+        # Устанавливаем иконку для окна через Windows API (более надежно)
+        myappid = 'freetalk.synthesizer.version1.0'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except:
+        pass
 
     from src.utils.logger import setup_logger
     from src.utils.config_manager import ConfigManager
@@ -42,7 +80,6 @@ def main():
     config.app_name = "Free Talk"
 
     window = MainWindow(config_manager, config)
-    window.setWindowTitle("Free Talk - Голосовой синтезатор")
     window.show()
 
     sys.exit(app.exec_())
