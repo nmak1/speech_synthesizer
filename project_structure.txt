@@ -1,0 +1,66 @@
+Структура проекта
+==================================================
+speech_synthesizer
+    ├── data
+    │   ├── dictionaries
+    │   │   └── t9_dictionary.json
+    │   ├── logs
+    │   ├── models
+    │   │   └── v3_1_ru.pt
+    │   └── user_data
+    ├── imeg
+    │   ├── logo.ico
+    │   ├── logo.png
+    │   ├── logo_app.png
+    │   ├── logo_big.png
+    │   └── logo_highres.png
+    ├── installers
+    │   ├── .                         ; Папка где будет создан установщик (текущая)
+    │   ├── FreeTalk.exe
+    │   ├── FreeTalk_Setup_v1.2.0.exe
+    │   ├── logo.ico
+    │   ├── logo.png
+    │   ├── logo_256.png
+    │   ├── logo_big.png
+    │   └── setup.iss
+    ├── src
+    │   ├── gui
+    │   │   ├── __init__.py
+    │   │   ├── main_window.py
+    │   │   ├── styles.py
+    │   │   ├── t9_widget.py
+    │   │   ├── text_editor.py
+    │   │   ├── tts_controls.py
+    │   │   └── zoom_slider.py
+    │   ├── text_processor
+    │   │   ├── __init__.py
+    │   │   ├── phonetics.py
+    │   │   ├── preprocessor.py
+    │   │   └── t9_predictor.py
+    │   ├── tts_engine
+    │   │   ├── __init__.py
+    │   │   ├── audio_player.py
+    │   │   ├── audio_saver.py
+    │   │   └── silero_tts.py
+    │   ├── utils
+    │   │   ├── __init__.py
+    │   │   ├── config_manager.py
+    │   │   ├── file_manager.py
+    │   │   └── logger.py
+    │   ├── __init__.py
+    │   ├── config.py
+    │   └── constants.py
+    ├── .gitignore
+    ├── CONTRIBUTING.md
+    ├── FreeTalk.spec
+    ├── LICENSE.txt
+    ├── Logo.ico
+    ├── logo.png
+    ├── logo_big.png
+    ├── main.py
+    ├── PROJECT_REPORT.md
+    ├── project_structure.txt
+    ├── README.md
+    ├── release.py
+    ├── requirements.txt
+    └── tree.py
