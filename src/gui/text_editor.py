@@ -1,174 +1,143 @@
 # src/gui/text_editor.py
-from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QTextEdit, QToolBar,
-    QFontComboBox, QComboBox, QPushButton, QColorDialog,
-    QHBoxLayout, QApplication
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor
+from PyQt5.QtWidgets import QTextEdit, QWidget, QVBoxLayout
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QTimer
+from PyQt5.QtGui import QFont
 
 
 class TextEditor(QWidget):
     text_changed = pyqtSignal()
 
+    MIN_FONT = 8
+    MAX_FONT = 96
+
     def __init__(self, config, on_text_changed=None):
         super().__init__()
         self.config = config
-        if on_text_changed:
-            self.text_changed.connect(on_text_changed)
+        self._font_size = getattr(config, "default_font_size", 14)
+        self._zoom_level = 100
+        self._is_updating = False
+        self._on_text_changed_cb = on_text_changed   # ← запоминаем, не подключаем
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._flush_settings)
 
         self.init_ui()
+        self.load_settings()                          # ← загрузка без сигнала
+
+        # Подключаем сигнал ТОЛЬКО ПОСЛЕ полной инициализации
+        if on_text_changed:
+            self.text_changed.connect(on_text_changed)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
 
-        # Панель инструментов форматирования
-        toolbar = QWidget()
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        toolbar_layout.setSpacing(5)
-
-        # Выбор шрифта
-        self.font_combo = QFontComboBox()
-        self.font_combo.currentFontChanged.connect(self.change_font)
-        toolbar_layout.addWidget(self.font_combo)
-
-        # Выбор размера
-        self.font_size_combo = QComboBox()
-        for size in [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 48, 72]:
-            self.font_size_combo.addItem(str(size))
-        self.font_size_combo.setCurrentText(str(self.config.default_font_size))
-        self.font_size_combo.currentTextChanged.connect(self.change_font_size)
-        toolbar_layout.addWidget(self.font_size_combo)
-
-        # Кнопка жирного начертания
-        self.bold_btn = QPushButton("B")
-        self.bold_btn.setCheckable(True)
-        self.bold_btn.setFixedSize(30, 30)
-        self.bold_btn.setStyleSheet("font-weight: bold;")
-        self.bold_btn.clicked.connect(self.toggle_bold)
-        toolbar_layout.addWidget(self.bold_btn)
-
-        # Кнопка выбора цвета
-        self.color_btn = QPushButton("🎨")
-        self.color_btn.setFixedSize(30, 30)
-        self.color_btn.clicked.connect(self.choose_color)
-        toolbar_layout.addWidget(self.color_btn)
-
-        # Предустановленные цвета
-        colors = ["#000000", "#FF0000", "#FFFF00", "#00FF00", "#0000FF", "#FF00FF"]
-        for color in colors:
-            color_btn = QPushButton()
-            color_btn.setFixedSize(25, 25)
-            color_btn.setStyleSheet(f"background-color: {color}; border: 1px solid gray;")
-            color_btn.clicked.connect(lambda checked, c=color: self.set_text_color(c))
-            toolbar_layout.addWidget(color_btn)
-
-        toolbar_layout.addStretch()
-        layout.addWidget(toolbar)
-
-        # Текстовое поле
         self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText("Введите текст для озвучивания...")
         self.text_edit.textChanged.connect(self.on_text_changed)
+
+        font = QFont("Segoe UI", self._font_size)
+        self.text_edit.setFont(font)
+        self.text_edit.setStyleSheet("""
+            QTextEdit {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 12px;
+                background-color: white;
+                font-family: 'Segoe UI';
+            }
+            QTextEdit:focus { border-color: #4CAF50; }
+        """)
         layout.addWidget(self.text_edit)
 
-        # Установка начальных параметров
-        self.set_font(self.config.default_font, self.config.default_font_size)
+    # ---------- API ----------
 
-    def get_current_format(self):
-        """Получение текущего формата текста"""
-        cursor = self.text_edit.textCursor()
-        if cursor.hasSelection():
-            return cursor.charFormat()
-        else:
-            return self.text_edit.currentCharFormat()
+    def set_text(self, text: str):
+        self._is_updating = True
+        self.text_edit.setText(text)
+        self._is_updating = False
+        self._schedule_save()
 
-    def change_font(self, font):
-        """Изменение шрифта для выделенного текста или текущей позиции"""
-        cursor = self.text_edit.textCursor()
-        if cursor.hasSelection():
-            # Применяем к выделенному тексту
-            format = QTextCharFormat()
-            format.setFont(font)
-            cursor.mergeCharFormat(format)
-        else:
-            # Применяем для будущего текста
-            self.text_edit.setCurrentFont(font)
-        self.text_edit.setFocus()
-
-    def change_font_size(self, size_str):
-        """Изменение размера шрифта для выделенного текста"""
-        try:
-            size = int(size_str)
-            cursor = self.text_edit.textCursor()
-            if cursor.hasSelection():
-                # Применяем к выделенному тексту
-                format = QTextCharFormat()
-                format.setFontPointSize(size)
-                cursor.mergeCharFormat(format)
-            else:
-                # Применяем для будущего текста
-                self.text_edit.setFontPointSize(size)
-            self.text_edit.setFocus()
-        except:
-            pass
-
-    def set_font(self, font_name, font_size):
-        """Установка шрифта для всего текста"""
-        self.text_edit.selectAll()
-        font = QFont(font_name, font_size)
-        self.text_edit.setCurrentFont(font)
-        self.text_edit.setFontPointSize(font_size)
-        cursor = self.text_edit.textCursor()
-        cursor.clearSelection()
-        self.text_edit.setTextCursor(cursor)
-
-    def toggle_bold(self):
-        """Переключение жирного начертания для выделенного текста"""
-        cursor = self.text_edit.textCursor()
-        if cursor.hasSelection():
-            # Применяем к выделенному тексту
-            format = QTextCharFormat()
-            format.setFontWeight(QFont.Bold if self.bold_btn.isChecked() else QFont.Normal)
-            cursor.mergeCharFormat(format)
-        else:
-            # Применяем для будущего текста
-            fmt = self.text_edit.currentCharFormat()
-            fmt.setFontWeight(QFont.Bold if self.bold_btn.isChecked() else QFont.Normal)
-            self.text_edit.setCurrentCharFormat(fmt)
-        self.text_edit.setFocus()
-
-    def choose_color(self):
-        """Выбор цвета текста"""
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.set_text_color(color.name())
-
-    def set_text_color(self, color_hex):
-        """Установка цвета текста для выделенного фрагмента"""
-        cursor = self.text_edit.textCursor()
-        format = QTextCharFormat()
-        format.setForeground(QColor(color_hex))
-
-        if cursor.hasSelection():
-            cursor.mergeCharFormat(format)
-        else:
-            self.text_edit.setCurrentCharFormat(format)
-        self.text_edit.setFocus()
-
-    def on_text_changed(self):
-        self.text_changed.emit()
-
-    def get_text(self):
+    def get_text(self) -> str:
         return self.text_edit.toPlainText()
 
-    def set_text(self, text):
-        self.text_edit.setPlainText(text)
+    def set_font_size(self, size: int):
+        size = max(self.MIN_FONT, min(self.MAX_FONT, size))
+        if size == self._font_size:
+            return
+        self._font_size = size
+        font = self.text_edit.font()
+        font.setPointSize(size)
+        self.text_edit.setFont(font)
+        self._schedule_save()
 
-    def set_zoom(self, zoom_value):
-        """Установка масштаба текста"""
-        base_size = self.config.default_font_size
-        new_size = max(6, min(72, base_size * zoom_value / 100))
-        self.text_edit.setFontPointSize(new_size)
+    def get_font_size(self) -> int:
+        return self._font_size
+
+    def set_zoom(self, value: int):
+        self._zoom_level = value
+        base_size = getattr(self.config, "default_font_size", 14)
+        # Не клиппим жёстко — позволим MIN/MAX в set_font_size
+        new_size = max(self.MIN_FONT, int(round(base_size * (value / 100.0))))
+        self.set_font_size(new_size)
+        self._schedule_save()
+
+    # ---------- Служебное ----------
+
+    def on_text_changed(self):
+        if not self._is_updating:
+            self.text_changed.emit()
+            self._schedule_save()
+
+    def _schedule_save(self):
+        """Отложенное сохранение — не чаще раза в 400 мс."""
+        self._save_timer.start(400)
+
+    def _flush_settings(self):
+        settings = QSettings("FreeTalk", "App")
+        settings.setValue("editor_text", self.get_text())
+        settings.setValue("editor_font_size", self._font_size)
+        settings.setValue("editor_zoom", self._zoom_level)
+
+    MAX_RESTORE_LEN = 5000
+
+    def load_settings(self):
+        """Загрузка настроек. Огромный текст не восстанавливаем."""
+        settings = QSettings("FreeTalk", "App")
+
+        # Загружаем текст, только если он не слишком большой
+        text = settings.value("editor_text", "")
+        if text and len(text) <= self.MAX_RESTORE_LEN:
+            self._is_updating = True
+            self.text_edit.setText(text)
+            self._is_updating = False
+        elif text and len(text) > self.MAX_RESTORE_LEN:
+            # Показываем заглушку и пишем в лог
+            try:
+                from src.utils.logger import get_logger
+                get_logger().info(
+                    f"Сохранённый текст ({len(text)} симв.) превышает лимит "
+                    f"{self.MAX_RESTORE_LEN} — не восстанавливаем"
+                )
+            except Exception:
+                pass
+
+        # Размер шрифта
+        font_size = settings.value("editor_font_size", self._font_size, type=int)
+        if font_size:
+            self.set_font_size(font_size)
+
+        # Зум
+        zoom = settings.value("editor_zoom", 100, type=int)
+        if zoom:
+            self._zoom_level = zoom
+
+    def save_settings(self):
+        """Оставлено для совместимости — форсирует сохранение."""
+        self._save_timer.stop()
+        self._flush_settings()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        if self.text_edit.toPlainText():
+            self.text_edit.selectAll()

@@ -1,195 +1,285 @@
 # src/tts_engine/silero_tts.py
-import torch
-import numpy as np
-import sounddevice as sd
-import soundfile as sf
 import os
-import re
-import urllib.request
-from typing import Optional
-import warnings
+import sys
 import time
+import threading
+from typing import Optional, List, Callable
 
-warnings.filterwarnings("ignore", category=UserWarning)
+import numpy as np
+import torch
+import soundfile as sf
 
 from src.utils.logger import get_logger
 
 
 class SileroTTS:
-    def __init__(self, config):
-        self.config = config
+    """Класс для работы с Silero TTS моделью (singleton)."""
+
+    _instance = None
+    _model = None
+    _sample_rate = None
+    _speaker = None
+    _device = None
+    _lock = threading.Lock()
+    _apply_lock = threading.Lock()          # защита от параллельных apply_tts
+    _model_ready = threading.Event()
+    _warmup_done = threading.Event()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(SileroTTS, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self, config, preload: bool = True, warmup: bool = True):
+        if getattr(self, "_initialized", False):
+            self.config = config
+            return
+        self._initialized = True
+
         self.logger = get_logger()
+        self.config = config
 
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.sample_rate = config.sample_rate
+        self._cache = {}
+        self._cache_max_size = 50
+        self._cache_lock = threading.Lock()
 
-        self.model = None
-        self.current_voice = None
-        self.available_voices = config.available_voices
+        if preload:
+            threading.Thread(
+                target=self._load_and_warmup,
+                args=(warmup,),
+                daemon=True,
+                name="SileroLoader",
+            ).start()
+        else:
+            self._load_model()
+            if warmup:
+                self._warmup()
 
-        self.logger.info(f"Используется устройство: {self.device}")
+    # ---------- Загрузка + warm-up в одном потоке ----------
 
-        self._load_model()
+    def _load_and_warmup(self, do_warmup: bool):
+        try:
+            self._load_model()
+            if do_warmup:
+                self._warmup()
+        except Exception as e:
+            self.logger.error(f"Ошибка инициализации модели: {e}")
+        finally:
+            # Даже при ошибке — снимаем блокировку, чтобы UI не завис навсегда
+            if not SileroTTS._warmup_done.is_set():
+                SileroTTS._warmup_done.set()
+
+    def _warmup(self):
+        """Двухпроходный warm-up."""
+        if SileroTTS._model is None:
+            return
+        try:
+            t0 = time.perf_counter()
+            with torch.no_grad():
+                _ = SileroTTS._model.apply_tts(
+                    text="а",
+                    speaker=SileroTTS._speaker or "aidar",
+                    sample_rate=SileroTTS._sample_rate or 48000,
+                )
+                t1 = time.perf_counter()
+                _ = SileroTTS._model.apply_tts(
+                    text="Привет, как твои дела? У меня всё хорошо.",
+                    speaker=SileroTTS._speaker or "aidar",
+                    sample_rate=SileroTTS._sample_rate or 48000,
+                )
+                t2 = time.perf_counter()
+            self.logger.info(
+                f"Warm-up: pass1={int((t1 - t0) * 1000)}ms, "
+                f"pass2={int((t2 - t1) * 1000)}ms, "
+                f"total={int((t2 - t0) * 1000)}ms"
+            )
+        except Exception as e:
+            self.logger.warning(f"Warm-up не удался: {e}")
+        finally:
+            SileroTTS._warmup_done.set()
+
+    def _get_model_path(self) -> str:
+        possible_paths = [
+            self.config.model_path,
+            "data/models/v3_1_ru.pt",
+            os.path.join(os.path.dirname(__file__), "..", "..", "data", "models", "v3_1_ru.pt"),
+            os.path.join(os.path.dirname(sys.executable), "data", "models", "v3_1_ru.pt"),
+        ]
+        try:
+            base_path = sys._MEIPASS
+            possible_paths.append(os.path.join(base_path, "data", "models", "v3_1_ru.pt"))
+        except Exception:
+            pass
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.logger.info(f"Модель найдена: {path}")
+                return path
+        return self.config.model_path
 
     def _load_model(self):
-        """Загрузка модели Silero TTS"""
-        try:
-            self.logger.info("Загрузка модели Silero TTS...")
-
-            model_path = os.path.join(self.config.models_dir, "v3_1_ru.pt")
-
-            if os.path.exists(model_path):
-                self.logger.info(f"Загрузка модели из файла: {model_path}")
-                self.model = torch.package.PackageImporter(model_path).load_pickle("tts_models", "model")
-                self.model.to(self.device)
-                self.logger.info("Модель успешно загружена")
+        with SileroTTS._lock:
+            if SileroTTS._model is not None:
+                SileroTTS._model_ready.set()
                 return
-            else:
-                self.logger.info("Локальная модель не найдена. Скачивание...")
-                self._download_model(model_path)
 
-        except Exception as e:
-            self.logger.error(f"Ошибка загрузки модели: {e}")
-            raise
+            try:
+                self.logger.info("Загрузка модели Silero TTS...")
+                t0 = time.perf_counter()
 
-    def _download_model(self, model_path: str):
-        """Скачивание модели"""
-        try:
-            url = "https://models.silero.ai/models/tts/ru/v3_1_ru.pt"
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                SileroTTS._device = device
 
-            def report_progress(block_num, block_size, total_size):
-                downloaded = block_num * block_size
-                if total_size > 0:
-                    percent = min(100, downloaded * 100 / total_size)
-                    if int(percent) % 10 == 0:
-                        self.logger.info(f"Прогресс: {percent:.1f}%")
+                model_path = self._get_model_path()
 
-            urllib.request.urlretrieve(url, model_path, report_progress)
-            self.logger.info("Модель скачана, загружаем...")
+                if not os.path.exists(model_path):
+                    self.logger.info("Модель не найдена, скачивание...")
+                    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                    import urllib.request
+                    url = "https://models.silero.ai/models/tts/ru/v3_1_ru.pt"
+                    urllib.request.urlretrieve(url, model_path)
 
-            self.model = torch.package.PackageImporter(model_path).load_pickle("tts_models", "model")
-            self.model.to(self.device)
-            self.logger.info("Модель успешно загружена")
+                model = torch.package.PackageImporter(model_path).load_pickle("tts_models", "model")
+                model.to(device)
 
-        except Exception as e:
-            self.logger.error(f"Ошибка скачивания: {e}")
-            raise
+                SileroTTS._model = model
+                SileroTTS._sample_rate = 48000
+                SileroTTS._speaker = self.config.default_voice or "aidar"
+                SileroTTS._model_ready.set()
 
-    def set_voice(self, voice_name: str):
-        if voice_name not in self.available_voices:
-            voice_name = "aidar"
-        self.current_voice = voice_name
-        self.logger.info(f"Установлен голос: {voice_name}")
+                self.logger.info(
+                    f"Модель загружена за {time.perf_counter() - t0:.2f} сек. Устройство: {device}"
+                )
+            except Exception as e:
+                self.logger.error(f"Ошибка загрузки модели: {e}")
+                raise
 
-    def _add_pauses_to_text(self, text: str) -> str:
-        """Добавляет паузы для лучшего произношения окончаний"""
-        # Добавляем пробелы вокруг знаков препинания для пауз
-        text = re.sub(r'([.,!?;:])', r' \1 ', text)
+    def is_ready(self) -> bool:
+        return SileroTTS._model is not None
 
-        # Добавляем дополнительную паузу перед концом предложения
-        if text.endswith('?'):
-            text = text[:-1] + ' ? '
-        elif text.endswith('!'):
-            text = text[:-1] + ' ! '
-        elif text.endswith('.'):
-            text = text[:-1] + ' . '
-        else:
-            text = text + ' . '
+    def is_warmup_done(self) -> bool:
+        return SileroTTS._warmup_done.is_set()
 
-        # Убираем лишние пробелы
-        text = re.sub(r'\s+', ' ', text).strip()
-
-        return text
+    # ---------- Синтез ----------
 
     def synthesize(self, text: str, speed: float = 1.0) -> Optional[np.ndarray]:
-        if not self.model:
+        """Синтез речи с детальными таймерами."""
+        if not text or not text.strip():
             return None
 
-        if not self.current_voice:
-            self.set_voice(self.available_voices[0])
+        t_start = time.perf_counter()
+
+        # Уровень 1: ждём окончания warm-up — иначе race condition с warm-up-потоком
+        self._model_ready.wait(timeout=30)
+        t0 = time.perf_counter()
+        self._warmup_done.wait(timeout=120)
+        t_wait = (time.perf_counter() - t0) * 1000
+
+        if SileroTTS._model is None:
+            self.logger.error("Модель не загружена")
+            return None
+
+        cache_key = (text.strip(), speed, SileroTTS._speaker)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+        if cached is not None:
+            self.logger.info(
+                f"[SYNTH] CACHE HIT '{text[:25]}...' len={len(text)}"
+            )
+            return cached
 
         try:
-            text = text.strip()
-            if not text:
-                return None
+            # Уровень 2: сериализуем apply_tts
+            t0 = time.perf_counter()
+            with SileroTTS._apply_lock:
+                with torch.no_grad():
+                    audio = SileroTTS._model.apply_tts(
+                        text=text,
+                        speaker=SileroTTS._speaker,
+                        sample_rate=SileroTTS._sample_rate,
+                    )
+            t_tts = (time.perf_counter() - t0) * 1000
 
-            # Добавляем паузы для лучшего произношения
-            processed_text = self._add_pauses_to_text(text)
-
-            self.logger.info(f"Синтез текста: '{processed_text}'")
-
-            # Синтез аудио
-            audio = self.model.apply_tts(
-                text=processed_text,
-                speaker=self.current_voice,
-                sample_rate=self.sample_rate
-            )
-
-            if torch.is_tensor(audio):
-                audio = audio.cpu().numpy()
-
-            if audio is None or len(audio) == 0:
-                return None
-
-            # Увеличиваем громкость
-            audio = audio * 1.2
-
-            # Нормализация
-            max_val = np.max(np.abs(audio))
-            if max_val > 1.0:
-                audio = audio / max_val
-
-            # Добавляем плавное затухание в конце (200 мс)
-            fade_duration = int(0.2 * self.sample_rate)
-            if len(audio) > fade_duration:
-                fade_out = np.linspace(1, 0, fade_duration)
-                audio[-fade_duration:] *= fade_out
-
-            # Добавляем небольшую паузу в конце (тишина)
-            pause_duration = int(0.3 * self.sample_rate)  # 300 мс тишины
-            pause = np.zeros(pause_duration)
-            audio = np.concatenate([audio, pause])
-
+            t0 = time.perf_counter()
             if speed != 1.0:
-                audio = self._change_speed(audio, speed)
+                audio = self._apply_speed(audio, speed)
+            t_speed = (time.perf_counter() - t0) * 1000
 
-            return audio
+            t0 = time.perf_counter()
+            audio_np = audio.cpu().numpy()
+            t_numpy = (time.perf_counter() - t0) * 1000
 
+            with self._cache_lock:
+                if len(self._cache) >= self._cache_max_size:
+                    self._cache.pop(next(iter(self._cache)))
+                self._cache[cache_key] = audio_np
+
+            t_total = (time.perf_counter() - t_start) * 1000
+            self.logger.info(
+                f"[SYNTH] '{text[:25]}...' len={len(text)} | "
+                f"wait_warmup={t_wait:.0f}ms tts={t_tts:.0f}ms "
+                f"speed={t_speed:.0f}ms numpy={t_numpy:.0f}ms "
+                f"TOTAL={t_total:.0f}ms"
+            )
+            return audio_np
         except Exception as e:
             self.logger.error(f"Ошибка синтеза: {e}")
             return None
 
+    def synthesize_stream(
+        self,
+        chunks: List[str],
+        speed: float = 1.0,
+        on_first_chunk: Optional[Callable[[np.ndarray], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> List[np.ndarray]:
+        results: List[np.ndarray] = []
+        for i, chunk in enumerate(chunks):
+            if should_stop and should_stop():
+                break
+            audio = self.synthesize(chunk, speed)
+            if audio is None:
+                continue
+            results.append(audio)
+            if i == 0 and on_first_chunk:
+                on_first_chunk(audio)
+        return results
+
+    def _apply_speed(self, audio: torch.Tensor, speed: float) -> torch.Tensor:
+        if speed == 1.0:
+            return audio
+        if speed > 1.0:
+            indices = torch.linspace(0, len(audio) - 1, int(len(audio) / speed)).long()
+            return audio[indices]
+        indices = torch.linspace(0, len(audio) - 1, int(len(audio) * (1 / speed))).long()
+        indices = indices.clamp(0, len(audio) - 1)
+        return audio[indices]
+
+    def set_voice(self, voice: str):
+        SileroTTS._speaker = voice
+        with self._cache_lock:
+            self._cache.clear()
+
     def play(self, audio: np.ndarray):
         try:
-            if audio is not None and len(audio) > 0:
-                sd.play(audio, self.sample_rate)
-                sd.wait()
+            import sounddevice as sd
+            sd.play(audio, SileroTTS._sample_rate)
+            sd.wait()
         except Exception as e:
             self.logger.error(f"Ошибка воспроизведения: {e}")
 
     def save_to_file(self, audio: np.ndarray, filepath: str) -> bool:
         try:
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            sf.write(filepath, audio, self.sample_rate)
+            sf.write(filepath, audio, SileroTTS._sample_rate)
             return True
         except Exception as e:
             self.logger.error(f"Ошибка сохранения: {e}")
             return False
 
-    def _change_speed(self, audio: np.ndarray, speed: float) -> np.ndarray:
-        try:
-            old_len = len(audio)
-            new_len = int(old_len / speed)
-            indices = np.linspace(0, old_len - 1, new_len).astype(np.int32)
-            indices = indices[indices < old_len]
-            return audio[indices]
-        except:
-            return audio
+    def get_sample_rate(self) -> int:
+        return SileroTTS._sample_rate or self.config.sample_rate
 
     def cleanup(self):
-        """Очистка ресурсов TTS движка"""
-        if hasattr(self, '_model'):
-            del self._model
-        if hasattr(self, '_player'):
-            self._player.stop()
+        with self._cache_lock:
+            self._cache.clear()
+        self.logger.info("Ресурсы очищены")

@@ -1,151 +1,247 @@
 # src/gui/tts_controls.py
 from PyQt5.QtWidgets import (
-    QWidget, QHBoxLayout, QComboBox, QPushButton,
-    QLabel, QSlider, QVBoxLayout, QGroupBox, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QComboBox, QSlider, QLabel, QGroupBox, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont
 
 
 class TTSControls(QWidget):
-    voice_changed = pyqtSignal(str)
-    speed_changed = pyqtSignal(float)
+    """Виджет управления TTS (Пункт 4 — крупные элементы)."""
+
     speak_requested = pyqtSignal()
     download_requested = pyqtSignal()
+
+    # --- Размеры (увеличены под требования Пункта 4) ---
+    BTN_H = 64            # было 40
+    BTN_MIN_W = 200       # было 120
+    BTN_FONT = 20         # было 14
+    LABEL_FONT = 18       # было ~12
+    COMBO_MIN_H = 52
+    COMBO_MIN_W = 220
+    SLIDER_MIN_W = 240
+    SLIDER_H = 48
+    SPACING = 16          # было 8
 
     def __init__(self, config, on_voice_changed=None):
         super().__init__()
         self.config = config
+        self.on_voice_changed = on_voice_changed
+        self.current_voice = getattr(config, "default_voice", "aidar") or "aidar"
+        self.current_speed = 1.0
 
-        if on_voice_changed:
-            self.voice_changed.connect(on_voice_changed)
+        if not getattr(self.config, "available_voices", None):
+            self.config.available_voices = ["aidar", "baya", "kseniya", "xenia", "random"]
 
         self.init_ui()
 
-    def init_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setSpacing(15)
+    # ---------- UI ----------
 
-        # Группа выбора голоса
-        voice_group = QGroupBox("Голос")
-        voice_layout = QVBoxLayout(voice_group)
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(self.SPACING)
+
+        group = QGroupBox("Управление голосом")
+        group.setStyleSheet(self._groupbox_style())
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(20, 28, 20, 20)
+        group_layout.setSpacing(self.SPACING)
+
+        # Верхняя строка: голос и скорость
+        top_row = QHBoxLayout()
+        top_row.setSpacing(self.SPACING)
+
+        voice_label = QLabel("Голос:")
+        voice_label.setFont(QFont("Segoe UI", self.LABEL_FONT, QFont.Bold))
+        voice_label.setMinimumWidth(90)          # было setFixedWidth(40)
+        top_row.addWidget(voice_label)
 
         self.voice_combo = QComboBox()
-        for voice in self.config.available_voices:
-            display_name = f"Голос {voice}_ru"
-            self.voice_combo.addItem(display_name, voice)
+        self.voice_combo.addItems(self.config.available_voices)
+        self.voice_combo.setCurrentText(self.current_voice)
+        self.voice_combo.setMinimumHeight(self.COMBO_MIN_H)
+        self.voice_combo.setMinimumWidth(self.COMBO_MIN_W)
+        self.voice_combo.setFont(QFont("Segoe UI", self.LABEL_FONT))
+        self.voice_combo.setStyleSheet(self._combo_style())
+        self.voice_combo.currentTextChanged.connect(self.on_voice_selected)
+        top_row.addWidget(self.voice_combo, 1)
 
-        self.voice_combo.currentIndexChanged.connect(self.on_voice_selected)
-        voice_layout.addWidget(self.voice_combo)
-        layout.addWidget(voice_group)
-
-        # Группа настройки скорости
-        speed_group = QGroupBox("Скорость")
-        speed_layout = QVBoxLayout(speed_group)
+        speed_label = QLabel("Скорость:")
+        speed_label.setFont(QFont("Segoe UI", self.LABEL_FONT, QFont.Bold))
+        speed_label.setMinimumWidth(120)         # было setFixedWidth(60)
+        top_row.addWidget(speed_label)
 
         self.speed_slider = QSlider(Qt.Horizontal)
-        self.speed_slider.setMinimum(50)  # 50% = 0.5
-        self.speed_slider.setMaximum(150)  # 150% = 1.5
+        self.speed_slider.setMinimum(50)
+        self.speed_slider.setMaximum(200)
         self.speed_slider.setValue(100)
         self.speed_slider.setTickPosition(QSlider.TicksBelow)
         self.speed_slider.setTickInterval(25)
+        self.speed_slider.setMinimumWidth(self.SLIDER_MIN_W)
+        self.speed_slider.setFixedHeight(self.SLIDER_H)
+        self.speed_slider.setStyleSheet(self._slider_style())
         self.speed_slider.valueChanged.connect(self.on_speed_changed)
-        speed_layout.addWidget(self.speed_slider)
+        top_row.addWidget(self.speed_slider, 2)
 
-        self.speed_label = QLabel("100%")
+        self.speed_label = QLabel("1.0x")
+        self.speed_label.setFont(QFont("Segoe UI", self.LABEL_FONT, QFont.Bold))
+        self.speed_label.setMinimumWidth(80)     # было setFixedWidth(40)
         self.speed_label.setAlignment(Qt.AlignCenter)
-        speed_layout.addWidget(self.speed_label)
-        layout.addWidget(speed_group)
+        self.speed_label.setStyleSheet(
+            "QLabel { color: #333; background: #f5f5f5; "
+            "border: 1px solid #ddd; border-radius: 6px; padding: 6px; }"
+        )
+        top_row.addWidget(self.speed_label)
 
-        # Кнопки
-        buttons_layout = QVBoxLayout()
+        group_layout.addLayout(top_row)
 
-        self.speak_btn = QPushButton("Озвучить")
-        self.speak_btn.setFixedSize(200, 110)
-        self.speak_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
+        # Нижняя строка: кнопки
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(self.SPACING)
+        bottom_row.addStretch()
+
+        self.speak_btn = QPushButton("▶  Озвучить")
+        self.speak_btn.setMinimumHeight(self.BTN_H)
+        self.speak_btn.setMinimumWidth(self.BTN_MIN_W)
+        self.speak_btn.setFont(QFont("Segoe UI", self.BTN_FONT, QFont.Bold))
+        self.speak_btn.setCursor(Qt.PointingHandCursor)
+        self.speak_btn.setStyleSheet(self._btn_style(
+            bg="#4CAF50", hover="#45a049", pressed="#3d8b40"
+        ))
+        self.speak_btn.clicked.connect(self.speak_requested.emit)
+        bottom_row.addWidget(self.speak_btn)
+
+        self.download_btn = QPushButton("💾  Скачать")
+        self.download_btn.setMinimumHeight(self.BTN_H)
+        self.download_btn.setMinimumWidth(self.BTN_MIN_W)
+        self.download_btn.setFont(QFont("Segoe UI", self.BTN_FONT, QFont.Bold))
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setStyleSheet(self._btn_style(
+            bg="#2196F3", hover="#1976D2", pressed="#1565C0"
+        ))
+        self.download_btn.clicked.connect(self.download_requested.emit)
+        bottom_row.addWidget(self.download_btn)
+
+        bottom_row.addStretch()
+        group_layout.addLayout(bottom_row)
+
+        layout.addWidget(group)
+
+    # ---------- Стили ----------
+
+    def _btn_style(self, bg, hover, pressed):
+        return f"""
+            QPushButton {{
+                background-color: {bg};
                 color: white;
-                font-size: 16px;
-                font-weight: bold;
                 border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-        """)
-        self.speak_btn.clicked.connect(self.on_speak_clicked)
-        buttons_layout.addWidget(self.speak_btn)
+                border-radius: 10px;
+                padding: 10px 24px;
+            }}
+            QPushButton:hover  {{ background-color: {hover}; }}
+            QPushButton:pressed {{ background-color: {pressed}; }}
+            QPushButton:disabled {{
+                background-color: #cccccc;
+                color: #666666;
+            }}
+        """
 
-        self.download_btn = QPushButton("Скачать")
-        self.download_btn.setFixedSize(200, 110)
-        self.download_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                font-size: 16px;
+    def _combo_style(self):
+        return """
+            QComboBox {
+                background: white;
+                border: 2px solid #bdbdbd;
+                border-radius: 8px;
+                padding: 8px 12px;
+                color: #333;
+            }
+            QComboBox:hover { border-color: #9e9e9e; }
+            QComboBox:focus { border-color: #4CAF50; }
+            QComboBox::drop-down { border: none; width: 32px; }
+            QComboBox QAbstractItemView {
+                font-size: 18px;
+                padding: 6px;
+                selection-background-color: #bbdefb;
+                selection-color: #000;
+            }
+        """
+
+    def _slider_style(self):
+        return """
+            QSlider::groove:horizontal {
+                height: 14px;
+                background: #e0e0e0;
+                border-radius: 7px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #4CAF50;
+                border-radius: 7px;
+            }
+            QSlider::add-page:horizontal {
+                background: #e0e0e0;
+                border-radius: 7px;
+            }
+            QSlider::handle:horizontal {
+                background: #2196F3;
+                border: 3px solid white;
+                width: 32px;
+                height: 32px;
+                margin: -12px 0;
+                border-radius: 18px;
+            }
+            QSlider::handle:horizontal:hover  { background: #1976D2; }
+            QSlider::handle:horizontal:pressed { background: #1565C0; }
+        """
+
+    def _groupbox_style(self):
+        return """
+            QGroupBox {
+                font-size: 18px;
                 font-weight: bold;
-                border: none;
-                border-radius: 5px;
+                border: 2px solid #e0e0e0;
+                border-radius: 10px;
+                margin-top: 14px;
+                background: #fafafa;
             }
-            QPushButton:hover {
-                background-color: #1976D2;
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 16px;
+                padding: 0 8px;
+                color: #333;
             }
-            QPushButton:pressed {
-                background-color: #1565C0;
-            }
-        """)
-        self.download_btn.clicked.connect(self.on_download_clicked)
-        buttons_layout.addWidget(self.download_btn)
+        """
 
-        layout.addLayout(buttons_layout)
-        layout.addStretch()
+    # ---------- Логика ----------
 
-    def on_speak_clicked(self):
-        """Обработчик кнопки Озвучить"""
+    def on_voice_selected(self, voice: str):
+        self.current_voice = voice
+        if self.on_voice_changed:
+            self.on_voice_changed(voice)
+
+    def on_speed_changed(self, value: int):
+        self.current_speed = value / 100.0
+        self.speed_label.setText(f"{self.current_speed:.1f}x")
+
+    def get_speed(self) -> float:
+        return self.current_speed
+
+    def get_current_voice(self) -> str:
+        return self.current_voice
+
+    def set_current_voice(self, voice: str):
+        if voice in self.config.available_voices:
+            self.current_voice = voice
+            idx = self.voice_combo.findText(voice)
+            if idx >= 0:
+                self.voice_combo.setCurrentIndex(idx)
+
+    def enable_buttons(self):
+        self.speak_btn.setEnabled(True)
+        self.download_btn.setEnabled(True)
+
+    def disable_buttons(self):
         self.speak_btn.setEnabled(False)
-        self.speak_btn.setText("Синтез...")
-        self.speak_requested.emit()
-
-    def on_download_clicked(self):
-        """Обработчик кнопки Скачать"""
         self.download_btn.setEnabled(False)
-        self.download_btn.setText("Сохранение...")
-        self.download_requested.emit()
-
-    def enable_buttons(self):
-        """Включение кнопок"""
-        self.speak_btn.setEnabled(True)
-        self.speak_btn.setText("Озвучить")
-        self.download_btn.setEnabled(True)
-        self.download_btn.setText("Скачать")
-
-    def on_voice_selected(self, index):
-        voice = self.voice_combo.itemData(index)
-        self.voice_changed.emit(voice)
-
-    def on_speed_changed(self, value):
-        speed = value / 100.0
-        self.speed_label.setText(f"{value}%")
-        self.speed_changed.emit(speed)
-
-    def set_current_voice(self, voice_name):
-        index = self.voice_combo.findData(voice_name)
-        if index >= 0:
-            self.voice_combo.setCurrentIndex(index)
-
-    def get_current_voice(self):
-        return self.voice_combo.currentData()
-
-    def get_speed(self):
-        return self.speed_slider.value() / 100.0
-
-    def enable_buttons(self):
-        """Включение кнопок после завершения операции"""
-        self.speak_btn.setEnabled(True)
-        self.speak_btn.setText("Озвучить")
-        self.download_btn.setEnabled(True)
-        self.download_btn.setText("Скачать")

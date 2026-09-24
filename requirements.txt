@@ -7,7 +7,6 @@ sounddevice==0.4.7
 soundfile==0.12.1
 nltk==3.8.1
 pyphen==0.15.0
-pydub==0.25.1
 requests==2.32.0
-python-dotenv==1.0.1
 pyinstaller==6.10.0
+pywin32==311

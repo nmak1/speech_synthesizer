@@ -8,6 +8,11 @@ speech_synthesizer
     │   ├── models
     │   │   └── v3_1_ru.pt
     │   └── user_data
+    ├── FreeTalk_v1.2.1_release
+    │   ├── FreeTalk_Setup_v1.2.1.exe
+    │   ├── FreeTalk_v1.2.1_portable.exe
+    │   ├── logo.ico
+    │   └── README.txt
     ├── imeg
     │   ├── logo.ico
     │   ├── logo.png
@@ -16,13 +21,14 @@ speech_synthesizer
     │   └── logo_highres.png
     ├── installers
     │   ├── .                         ; Папка где будет создан установщик (текущая)
+    │   ├── data
+    │   │   └── dictionaries
+    │   │       └── t9_dictionary.json
     │   ├── FreeTalk.exe
-    │   ├── FreeTalk_Setup_v1.2.0.exe
+    │   ├── FreeTalk_Setup_v1.2.1.exe
     │   ├── logo.ico
-    │   ├── logo.png
-    │   ├── logo_256.png
-    │   ├── logo_big.png
-    │   └── setup.iss
+    │   ├── setup.iss
+    │   └── setup.iss.bak
     ├── src
     │   ├── gui
     │   │   ├── __init__.py
@@ -53,14 +59,14 @@ speech_synthesizer
     ├── .gitignore
     ├── CONTRIBUTING.md
     ├── FreeTalk.spec
+    ├── FreeTalk_v1.2.1_release.zip
     ├── LICENSE.txt
-    ├── Logo.ico
-    ├── logo.png
-    ├── logo_big.png
+    ├── logo.ico
     ├── main.py
     ├── PROJECT_REPORT.md
     ├── project_structure.txt
     ├── README.md
     ├── release.py
     ├── requirements.txt
+    ├── test_minimal.py
     └── tree.py

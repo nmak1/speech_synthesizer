@@ -1,8 +1,8 @@
-# main.py - исправленная версия с поддержкой иконок
+# main.py
 import sys
 import os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
@@ -10,62 +10,40 @@ from PyQt5.QtGui import QIcon, QPixmap
 
 
 def main():
-    # Настройки High DPI
-    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+    if hasattr(Qt, "AA_EnableHighDpiScaling"):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+    if hasattr(Qt, "AA_UseHighDpiPixmaps"):
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
-
-    # Устанавливаем имя приложения
     app.setApplicationName("FreeTalk")
     app.setOrganizationName("FreeTalk")
 
-    # Создаем иконку с несколькими размерами для лучшего отображения
     icon = QIcon()
-
-    # Пути к иконкам (поиск в разных местах)
     icon_paths = [
-        # Основные пути
-        "logo.ico",
-        "logo.png",
-        "logo_big.png",
-        # Пути из папки imeg
         "imeg/logo.ico",
+        "logo.ico",
         "imeg/logo.png",
-        "imeg/logo_big.png",
-        "imeg/logo_highres.png",
-        # Пути из installers (для скомпилированной версии)
+        "logo.png",
+        os.path.join(os.path.dirname(sys.executable), "imeg", "logo.ico"),
         os.path.join(os.path.dirname(sys.executable), "logo.ico"),
-        os.path.join(os.path.dirname(sys.executable), "logo.png"),
     ]
-
-    icon_found = False
     for path in icon_paths:
         if os.path.exists(path):
             pixmap = QPixmap(path)
             if not pixmap.isNull():
-                # Добавляем разные размеры иконки
                 for size in [16, 32, 48, 64, 128, 256]:
-                    scaled = pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    icon.addPixmap(scaled)
-                icon_found = True
-                print(f"[OK] Иконка загружена: {path}")
+                    icon.addPixmap(pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 break
-
-    if icon_found:
+    if not icon.isNull():
         app.setWindowIcon(icon)
-    else:
-        print("[WARN] Иконка не найдена, используется стандартная")
 
-    # Создаем временный QWidget для установки иконки через стиль (Windows)
     try:
         import ctypes
-        # Устанавливаем иконку для окна через Windows API (более надежно)
-        myappid = 'freetalk.synthesizer.version1.0'
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-    except:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "freetalk.synthesizer.version2.0"
+        )
+    except Exception:
         pass
 
     from src.utils.logger import setup_logger
@@ -73,7 +51,7 @@ def main():
     from src.gui.main_window import MainWindow
 
     logger = setup_logger()
-    logger.info("Запуск приложения 'Free Talk'")
+    logger.info("Запуск приложения 'Free Talk' v2.0.0")
 
     config_manager = ConfigManager()
     config = config_manager.load_config()

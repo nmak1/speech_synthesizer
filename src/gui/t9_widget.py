@@ -7,7 +7,13 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 class T9Widget(QWidget):
     word_selected = pyqtSignal(str)
-    punctuation_selected = pyqtSignal(str)  # Новый сигнал для знаков препинания
+    punctuation_selected = pyqtSignal(str)
+
+    # Размеры (Пункт 4)
+    TOGGLE_W, TOGGLE_H = 70, 50
+    PUNCT_W, PUNCT_H = 55, 50
+    SUGG_W, SUGG_H = 160, 50
+    SPACING = 8
 
     def __init__(self, config, on_word_selected=None):
         super().__init__()
@@ -22,24 +28,27 @@ class T9Widget(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setSpacing(5)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(self.SPACING)
 
-        # Верхняя панель с T9 и знаками препинания
+        # --- Верхняя строка: T9 + пунктуация ---
         top_layout = QHBoxLayout()
+        top_layout.setSpacing(self.SPACING)
 
-        # Кнопка Toggle для включения/выключения T9
+        # Кнопка T9
         self.toggle_btn = QPushButton("T9")
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.setChecked(self.enabled)
-        self.toggle_btn.setFixedSize(60, 40)
+        self.toggle_btn.setFixedSize(self.TOGGLE_W, self.TOGGLE_H)
+        self.toggle_btn.setCursor(Qt.PointingHandCursor)
         self.toggle_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f0f0f0;
                 border: 2px solid #cccccc;
-                border-radius: 5px;
-                font-size: 14px;
+                border-radius: 8px;
+                font-size: 18px;
                 font-weight: bold;
+                color: #333;
             }
             QPushButton:checked {
                 background-color: #4CAF50;
@@ -53,21 +62,26 @@ class T9Widget(QWidget):
         self.toggle_btn.clicked.connect(self.toggle_t9)
         top_layout.addWidget(self.toggle_btn)
 
-        # Кнопки знаков препинания
+        # Кнопки пунктуации
         punctuation_btns = [",", ".", "!", "?", "...", ";", ":", "(", ")"]
         for punc in punctuation_btns:
             btn = QPushButton(punc)
-            btn.setFixedSize(45, 40)
+            btn.setFixedSize(self.PUNCT_W, self.PUNCT_H)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: #e0e0e0;
                     border: 1px solid #bdbdbd;
-                    border-radius: 5px;
-                    font-size: 14px;
+                    border-radius: 6px;
+                    font-size: 18px;
                     font-weight: bold;
+                    color: #333;
                 }
                 QPushButton:hover {
                     background-color: #d0d0d0;
+                }
+                QPushButton:pressed {
+                    background-color: #c0c0c0;
                 }
             """)
             btn.clicked.connect(lambda checked, p=punc: self.on_punctuation_clicked(p))
@@ -76,23 +90,23 @@ class T9Widget(QWidget):
         top_layout.addStretch()
         main_layout.addLayout(top_layout)
 
-        # Контейнер для кнопок предсказаний
+        # --- Контейнер предсказаний ---
         self.suggestions_container = QWidget()
         self.suggestions_layout = QHBoxLayout(self.suggestions_container)
         self.suggestions_layout.setContentsMargins(0, 0, 0, 0)
-        self.suggestions_layout.setSpacing(10)
+        self.suggestions_layout.setSpacing(self.SPACING)
 
-        # Создаем 5 кнопок для предсказаний
         self.suggestion_buttons = []
         for i in range(5):
             btn = QPushButton("")
-            btn.setFixedSize(130, 40)
+            btn.setFixedSize(self.SUGG_W, self.SUGG_H)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: white;
                     border: 2px solid #2196F3;
-                    border-radius: 5px;
-                    font-size: 12px;
+                    border-radius: 6px;
+                    font-size: 16px;
                     font-weight: bold;
                     color: #333333;
                 }
@@ -110,19 +124,23 @@ class T9Widget(QWidget):
 
         self.suggestions_layout.addStretch()
 
-        self.suggestions_container.setVisible(self.enabled)
+        # Скрываем, пока нет предсказаний
+        self.suggestions_container.setVisible(False)
         main_layout.addWidget(self.suggestions_container)
 
+    # ---------- Логика ----------
+
     def on_punctuation_clicked(self, punctuation: str):
-        """Обработчик нажатия на знак препинания - просто вставляем символ"""
+        """Вставляем знак препинания."""
         self.word_selected.emit(punctuation)
 
     def toggle_t9(self, checked):
         self.enabled = checked
-        self.suggestions_container.setVisible(checked)
-
         if not checked:
             self.update_suggestions([])
+        else:
+            # Если включили и есть сохранённые — показать снова
+            self.suggestions_container.setVisible(len(self.suggestions) > 0)
 
     def update_suggestions(self, suggestions):
         self.suggestions = suggestions[:5]
@@ -140,6 +158,10 @@ class T9Widget(QWidget):
                 btn.setText("")
                 btn.setEnabled(False)
                 btn.setVisible(False)
+
+        # Показываем контейнер, только если есть что показать и T9 включён
+        has_any = self.enabled and len(self.suggestions) > 0
+        self.suggestions_container.setVisible(has_any)
 
     def on_button_clicked(self, index):
         if index < len(self.suggestions):

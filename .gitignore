@@ -1,35 +1,58 @@
-# Обновляем .gitignore
-@"
-# Python
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
 .Python
+
+# ---------- Virtual env ----------
 venv/
 env/
 ENV/
+.venv/
+env.bak/
+venv.bak/
 
-# Build files
+# ---------- Build output ----------
 dist/
 build/
-*.spec
-*.exe
-*.zip
+*.spec.bak
+_internal/
+FreeTalk_Distribution/
+*.egg-info/
+.eggs/
 
-# IDE
+# ---------- Installer output ----------
+installers/Output/
+installers/*.bak
+installers/*.exe
+installers/FreeTalk.exe
+installers/FreeTalk_Setup_*.exe
+
+# ---------- Logs ----------
+*.log
+logs/
+log/
+data/logs/
+
+# ---------- Модели (большие файлы — НЕ в git) ----------
+data/models/*.pt
+data/models/*.pth
+*.bin
+*.safetensors
+
+# ---------- Пользовательские данные ----------
+data/user_data/
+
+# ---------- IDE / OS ----------
 .vscode/
 .idea/
 *.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Temporary files
-*.log
-*.tmp
-
-# Installer temp
-_internal/
-FreeTalk_Distribution/
-
-# Data backups
-data/user_data/
-data/logs/
-"@ | Out-File -FilePath ".gitignore" -Encoding UTF8 -Force
+# ---------- Release archives ----------
+FreeTalk_v*/
+*.zip
