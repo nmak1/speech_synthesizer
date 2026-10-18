@@ -2,22 +2,21 @@
 import os
 import sys
 import re
-import time
-import threading
 from datetime import datetime
 from typing import List, Optional
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStatusBar, QMessageBox, QLabel, QFrame, QApplication,
-    QSizePolicy, QFileDialog
+    QSizePolicy, QFileDialog, QAction
 )
 from PyQt5.QtCore import Qt, QSettings, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon, QPixmap, QKeySequence
 
 from src.gui.text_editor import TextEditor
 from src.gui.tts_controls import TTSControls
 from src.gui.t9_widget import T9Widget
+from src.gui.format_bar import FormatBar
 from src.gui.zoom_slider import ZoomSlider
 from src.gui.styles import MAIN_STYLE
 from src.tts_engine.silero_tts import SileroTTS
@@ -25,17 +24,15 @@ from src.tts_engine.audio_player import AudioPlayer
 from src.text_processor.t9_predictor import T9Predictor
 from src.utils.logger import get_logger
 from src.utils.config_manager import ConfigManager
+from src.workers import ModelReadyWorker, SynthesizePlayWorker, SynthesizeSaveWorker
+from src.paths import find_resource, resource_path
+from src.version import __version__, APP_USER_MODEL_ID
 
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 
 
 class MainWindow(QMainWindow):
-    _first_sample_signal = pyqtSignal(float)
-    _ready_signal = pyqtSignal()
-    _play_finished_signal = pyqtSignal()
-    _download_ready_signal = pyqtSignal(object)
-
     def __init__(self, config_manager, config):
         super().__init__()
         self.config_manager = config_manager
@@ -44,59 +41,45 @@ class MainWindow(QMainWindow):
         self.tts_engine: Optional[SileroTTS] = None
         self.audio_player: Optional[AudioPlayer] = None
         self.t9_predictor = None
-        self._synthesis_lock = threading.Lock()
-        self._stop_current = threading.Event()
+        self._synthesis_busy = False
         self._is_zooming = False
+        self._model_worker: Optional[ModelReadyWorker] = None
+        self._play_worker: Optional[SynthesizePlayWorker] = None
+        self._save_worker: Optional[SynthesizeSaveWorker] = None
 
         self.init_ui()
+        self.init_actions()
         self.init_components()
         self.load_settings()
-
-        self._first_sample_signal.connect(self._on_first_sample)
-        self._ready_signal.connect(self._on_model_ready)
-        self._play_finished_signal.connect(self._finish_synthesis)  # ← новый
-        self._download_ready_signal.connect(self._on_download_ready)
     # ---------- Ресурсы ----------
 
-    def get_resource_path(self, relative_path):
-        try:
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.abspath(".")
-        return os.path.join(base_path, relative_path)
+    @staticmethod
+    def get_resource_path(relative_path: str) -> str:
+        """Единый резолвер ресурсов (dev / PyInstaller) — см. src/paths.py."""
+        return resource_path(relative_path)
 
     # ---------- UI ----------
 
     def init_ui(self):
-        self.setWindowTitle("Free Talk - Голосовой синтезатор")
+        self.setWindowTitle(f"Free Talk v{__version__} - Голосовой синтезатор")
         self.setMinimumSize(1200, 800)
 
         # --- Иконка окна ---
         icon = QIcon()
-        icon_paths = [
-            self.get_resource_path("imeg/logo.ico"),
-            self.get_resource_path("logo.ico"),
-            os.path.join(os.path.dirname(sys.executable), "imeg", "logo.ico"),
-            os.path.join(os.path.dirname(sys.executable), "logo.ico"),
-            "imeg/logo.ico",
-            "logo.ico",
-        ]
-        icon_loaded = False
-        for path in icon_paths:
-            if os.path.exists(path):
-                pixmap = QPixmap(path)
-                if not pixmap.isNull():
-                    for size in [16, 24, 32, 48, 64, 128, 256]:
-                        icon.addPixmap(pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                    self.setWindowIcon(icon)
-                    icon_loaded = True
-                    break
-        if not icon_loaded:
-            try:
-                import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("freetalk.synthesizer.version1.0")
-            except Exception:
-                pass
+        icon_path = find_resource(
+            "imeg/logo.ico", "logo.ico", "imeg/logo.png", "logo.png"
+        )
+        if icon_path:
+            pixmap = QPixmap(icon_path)
+            if not pixmap.isNull():
+                for size in [16, 24, 32, 48, 64, 128, 256]:
+                    icon.addPixmap(pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.setWindowIcon(icon)
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        except Exception:
+            pass
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -118,41 +101,25 @@ class MainWindow(QMainWindow):
         LOGO_MAX_W = 260
         LOGO_MAX_H = 180
 
-        logo_paths = [
-            self.get_resource_path("imeg/logo.png"),
-            self.get_resource_path("logo.png"),
-            os.path.join(os.path.dirname(sys.executable), "imeg", "logo.png"),
-            os.path.join(os.path.dirname(sys.executable), "logo.png"),
-            "imeg/logo.png",
-            "logo.png",
-        ]
+        logo_path = find_resource("imeg/logo.png", "logo.png", "imeg/logo.ico", "logo.ico")
 
-        logo_found = False
-        for path in logo_paths:
-            if not os.path.exists(path):
-                continue
-            pix = QPixmap(path)
-            if pix.isNull():
-                continue
-            pix.setDevicePixelRatio(1.0)
-            scaled = pix.scaled(
-                LOGO_MAX_W, LOGO_MAX_H,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            logo_label.setPixmap(scaled)
-            logo_label.setFixedSize(LOGO_MAX_W, LOGO_MAX_H)
-            logo_label.setAlignment(Qt.AlignCenter)
-            logo_found = True
-            self.logger.info(
-                f"Логотип загружен: {path}, "
-                f"исходник {pix.width()}x{pix.height()}, "
-                f"после scale {scaled.width()}x{scaled.height()}"
-            )
-            break
+        if logo_path:
+            pix = QPixmap(logo_path)
+            if not pix.isNull():
+                pix.setDevicePixelRatio(1.0)
+                scaled = pix.scaled(
+                    LOGO_MAX_W, LOGO_MAX_H,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                logo_label.setPixmap(scaled)
+                logo_label.setAlignment(Qt.AlignCenter)
+                self.logger.info(f"Логотип загружен: {logo_path}")
+            else:
+                logo_path = None
 
-        if not logo_found:
-            self.logger.warning(f"Логотип не найден, проверены пути: {logo_paths}")
+        if not logo_path:
+            self.logger.warning("Логотип не найден через src/paths.find_resource")
             logo_label.setText("FREE\nTALK")
             logo_label.setStyleSheet("""
                 font-size: 42px;
@@ -161,7 +128,7 @@ class MainWindow(QMainWindow):
                 background: transparent;
             """)
             logo_label.setAlignment(Qt.AlignCenter)
-            logo_label.setFixedSize(LOGO_MAX_W, LOGO_MAX_H)
+        logo_label.setFixedSize(LOGO_MAX_W, LOGO_MAX_H)
 
         top_layout.addWidget(logo_label)
 
@@ -180,7 +147,18 @@ class MainWindow(QMainWindow):
         self.text_editor = TextEditor(self.config, self.on_text_changed)
         layout.addWidget(self.text_editor, 1)
 
-        # --- T9 ---
+        # --- Панель форматирования (шрифты, размер, цвет) ---
+        self.format_bar = FormatBar(self.config)
+        self.format_bar.font_changed.connect(self.text_editor.set_font_family)
+        self.format_bar.size_changed.connect(self.text_editor.set_font_size)
+        self.format_bar.color_changed.connect(self.text_editor.set_text_color)
+        self.format_bar.bold_toggled.connect(self.text_editor.set_bold)
+        self.format_bar.italic_toggled.connect(self.text_editor.set_italic)
+        self.text_editor.format_changed.connect(self._sync_format_bar)
+        layout.addWidget(self.format_bar)
+
+        # --- T9 (кнопка включения убрана из интерфейса по решению пользователя;
+        #     знаки препинания остаются доступны) ---
         self.t9_widget = T9Widget(self.config, self.on_t9_word_selected)
         layout.addWidget(self.t9_widget)
 
@@ -196,6 +174,65 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Загрузка модели...")
         self.setStyleSheet(MAIN_STYLE)
+
+    # ---------- Горячие клавиши ----------
+
+    def init_actions(self):
+        """Действия с горячими клавишами (работают глобально в окне)."""
+        def make(text, shortcut, slot):
+            act = QAction(text, self)
+            act.setShortcut(QKeySequence(shortcut))
+            act.triggered.connect(slot)
+            self.addAction(act)
+            return act
+
+        self.act_speak = make("Озвучить текст", "Ctrl+Return", self.on_speak)
+        self.act_download = make("Сохранить аудио", "Ctrl+S", self.on_download)
+        self.act_stop = make("Остановить воспроизведение", "Esc", self.on_stop_playback)
+        self.act_clear = make("Очистить текст", "Ctrl+Del", self.on_clear_text)
+        self.act_focus = make("Фокус в редактор", "Alt+R", lambda: self.text_editor.text_edit.setFocus())
+        self.act_zoom_in = make("Увеличить масштаб", "Ctrl++", lambda: self._change_zoom(+10))
+        self.act_zoom_out = make("Уменьшить масштаб", "Ctrl+-", lambda: self._change_zoom(-10))
+        self.act_zoom_reset = make("Сбросить масштаб", "Ctrl+0", lambda: self._set_zoom(100))
+        self.act_quit = make("Выход", "Ctrl+Q", self.close)
+
+        # Меню «Файл» — действия видны и с подсказками клавиш
+        file_menu = self.menuBar().addMenu("Файл")
+        for act in (self.act_speak, self.act_download, None, self.act_clear, self.act_quit):
+            if act is None:
+                file_menu.addSeparator()
+            else:
+                file_menu.addAction(act)
+        view_menu = self.menuBar().addMenu("Вид")
+        for act in (self.act_zoom_in, self.act_zoom_out, self.act_zoom_reset):
+            view_menu.addAction(act)
+
+    def _change_zoom(self, delta: int):
+        self._set_zoom(self.zoom_slider.get_value() + delta)
+
+    def _set_zoom(self, value: int):
+        value = max(50, min(400, value))
+        self.zoom_slider.set_value(value)
+        self.on_zoom_changed(value)
+        self.on_zoom_finished()
+
+    def on_stop_playback(self):
+        """Esc — остановить текущее воспроизведение/синтез."""
+        stopped = False
+        if self._play_worker is not None and self._play_worker.isRunning():
+            self._play_worker.stop()
+            stopped = True
+        if self.audio_player and self.audio_player.is_playing_audio():
+            self.audio_player.hard_stop()
+            stopped = True
+        if stopped:
+            self.status_bar.showMessage("Воспроизведение остановлено", 2000)
+
+    def on_clear_text(self):
+        self.text_editor.set_text("")
+        self.text_editor.text_edit.setFocus()
+
+    # ---------- Компоненты ----------
 
     def init_components(self):
         """Инициализация фоновых компонентов. Все ошибки — в лог и QMessageBox."""
@@ -220,6 +257,15 @@ class MainWindow(QMainWindow):
             # T9 не критичен — продолжаем без него
             self.t9_predictor = None
 
+        # Динамическое обучение словаря T9 по набранному тексту (пакетно)
+        if self.t9_predictor is not None and getattr(self.config, "t9_learning_enabled", True):
+            self.text_editor.set_predictor(self.t9_predictor)
+            self._learn_timer = QTimer(self)
+            self._learn_timer.setSingleShot(True)
+            self._learn_timer.setInterval(getattr(self.config, "t9_learn_interval_ms", 5000))
+            self._learn_timer.timeout.connect(self._flush_t9_learning)
+            self.text_editor.learn_requested.connect(self._schedule_t9_learning)
+
         try:
             self.tts_controls.speak_requested.connect(self.on_speak)
             self.tts_controls.download_requested.connect(self.on_download)
@@ -233,24 +279,24 @@ class MainWindow(QMainWindow):
             pass
         self.status_bar.showMessage("TTS движок загружается в фоне...")
 
-        threading.Thread(target=self._wait_model_ready, daemon=True).start()
+        # QThread-воркер вместо raw threading.Thread: ready() — сигнал в UI-поток
+        self._model_worker = ModelReadyWorker(self.tts_engine, self.audio_player, parent=self)
+        self._model_worker.ready.connect(self._on_model_ready)
+        self._model_worker.start()
 
-    def _wait_model_ready(self):
-        """Фоновый поток: ждёт готовности модели и шлёт сигнал в UI."""
-        for _ in range(1200):  # до 120 сек
-            if self.tts_engine and self.tts_engine.is_warmup_done():
-                if self.audio_player and self.tts_engine.get_sample_rate():
-                    try:
-                        self.audio_player.prewarm(self.tts_engine.get_sample_rate())
-                    except Exception as e:
-                        self.logger.warning(f"Prewarm не удался: {e}")
+    # ---------- Динамическое обучение T9 ----------
 
-                self._ready_signal.emit()
-                return
-            time.sleep(0.1)
+    def _schedule_t9_learning(self, text: str):
+        """Откладываем обучение; перечитываем текст в момент срабатывания таймера."""
+        self._learn_timer.start()
 
-        self.logger.warning("Модель не готова за 120 сек")
-        self._ready_signal.emit()
+    def _flush_t9_learning(self):
+        if self.t9_predictor is None:
+            return
+        try:
+            self.t9_predictor.learn_from_text(self.text_editor.get_text())
+        except Exception as e:
+            self.logger.warning(f"Обучение T9-словаря не удалось: {e}")
 
     def _on_model_ready(self):
         """Вызывается в главном потоке, когда модель и warm-up готовы."""
@@ -276,19 +322,46 @@ class MainWindow(QMainWindow):
 
         text = self.text_editor.get_text()
         if self.t9_widget.is_enabled() and text:
-            words = text.split()
-            if words:
-                predictions = self.t9_predictor.predict(words[-1])
+            words = re.findall(r"\S+", text)
+            last = words[-1] if words else ""
+            # чистим префикс от знаков препинания, ищем по буквам/цифрам
+            prefix = re.sub(r"[^\w-]", "", last, flags=re.UNICODE)
+            if prefix:
+                predictions = self.t9_predictor.predict(prefix)
                 self.t9_widget.update_suggestions(predictions)
+            else:
+                self.t9_widget.update_suggestions([])
+
+    def _sync_format_bar(self):
+        """Синхронизировать панель формата с текущим выделением в редакторе."""
+        try:
+            fmt = self.text_editor.current_format()
+            self.format_bar.sync_from_editor(**fmt)
+        except Exception as e:
+            self.logger.debug(f"Не удалось синхронизировать панель формата: {e}")
 
     def on_t9_word_selected(self, word):
+        """Замена последнего 'слова' (учитывая знаки препинания) или вставка пунктуации."""
         text = self.text_editor.get_text()
-        words = text.split()
-        if words:
-            words[-1] = word
-            self.text_editor.set_text(" ".join(words))
+
+        # Пунктуация из панели T9 — добавляем к тексту
+        if not re.search(r"[\w]", word, flags=re.UNICODE):
+            new_text = f"{text}{word} " if text else word
+            self.text_editor.set_text(new_text)
+            return
+
+        # Обычное слово из подсказок: заменяем последний токен
+        match = re.search(r"\S*$", text)
+        token = match.group(0) if match else ""
+        m = re.match(r"^([^\w]*)(.*?)([^\w]*)$", token, flags=re.UNICODE)
+        if m:
+            leading, core, trailing = m.groups()
+            new_token = leading + word + trailing
+            start = len(text) - len(token)
+            new_text = text[:start] + new_token + text[start + len(token):]
         else:
-            self.text_editor.set_text(word)
+            new_text = (text + " " + word).strip()
+        self.text_editor.set_text(new_text)
 
     def on_zoom_changed(self, value):
         """Вызывается при каждом движении ползунка — конфиг НЕ сохраняем."""
@@ -342,65 +415,45 @@ class MainWindow(QMainWindow):
         return result
 
     def on_speak(self):
-        if not self._synthesis_lock.acquire(blocking=False):
+        if self._synthesis_busy:
             self.status_bar.showMessage("Синтез уже выполняется")
             return
 
         text = self.text_editor.get_text()
         if not text.strip():
-            self._synthesis_lock.release()
             self.tts_controls.enable_buttons()
             return
 
         # Прерываем предыдущее воспроизведение только если оно активно
+        if self._play_worker is not None and self._play_worker.isRunning():
+            self._play_worker.stop()
         if self.audio_player and self.audio_player.is_playing_audio():
-            self._stop_current.set()
             self.audio_player.hard_stop()
-        self._stop_current = threading.Event()
 
         speed = self.tts_controls.get_speed()
         self.status_bar.showMessage("Синтез речи...")
         self.tts_controls.disable_buttons()
 
         sentences = self._split_sentences(text)
+        self._synthesis_busy = True
 
-        def task():
-            try:
-                sample_rate = self.tts_engine.get_sample_rate()
+        # QThread вместо raw threading.Thread — все события в UI через сигналы
+        self._play_worker = SynthesizePlayWorker(
+            self.tts_engine, self.audio_player, sentences, speed,
+            self.tts_engine.get_sample_rate(), parent=self,
+        )
+        self._play_worker.first_sample.connect(self._on_first_sample)
+        self._play_worker.finished_ok.connect(self._finish_synthesis)
+        self._play_worker.error.connect(self._on_synthesis_error)
+        self._play_worker.start()
 
-                def chunk_generator():
-                    for i, s in enumerate(sentences):
-                        if self._stop_current.is_set():
-                            return
-                        audio = self.tts_engine.synthesize(s, speed)
-                        if audio is None:
-                            continue
-                        yield audio
-
-                def on_first(dt_ms: float):
-                    self._first_sample_signal.emit(dt_ms)
-
-                self.logger.info("Клик → старт воспроизведения: измеряется в on_first_sample")
-
-                self.audio_player.play_chunks(
-                    chunk_generator(),
-                    sample_rate,
-                    on_finished=self._on_play_finished,
-                    on_first_sample=on_first,
-                )
-            except Exception as e:
-                self.logger.error(f"Ошибка синтеза: {e}", exc_info=True)
-                self.status_bar.showMessage("Ошибка синтеза")
-                self._finish_synthesis()
-
-        threading.Thread(target=task, daemon=True).start()
+    def _on_synthesis_error(self, message: str):
+        self.logger.error(f"Ошибка синтеза: {message}")
+        self.status_bar.showMessage("Ошибка синтеза")
+        self._finish_synthesis()
 
     def _on_first_sample(self, dt_ms: float):
         self.status_bar.showMessage(f"Воспроизведение (задержка ~{dt_ms:.0f} мс)", 5000)
-
-    def _on_play_finished(self):
-        """Вызывается из worker-потока AudioPlayer. Шлём сигнал в UI."""
-        self._play_finished_signal.emit()
 
     def _finish_synthesis(self):
         self.status_bar.showMessage("Готово", 3000)
@@ -408,64 +461,38 @@ class MainWindow(QMainWindow):
             self.tts_controls.enable_buttons()
         except Exception:
             pass
-        try:
-            self._synthesis_lock.release()
-        except RuntimeError:
-            pass
+        self._synthesis_busy = False
 
     # ---------- Скачивание ----------
 
     def on_download(self):
-        self.logger.info("[DOWNLOAD] on_download ВЫЗВАН")
-
-        if not self._synthesis_lock.acquire(blocking=False):
-            self.logger.warning("[DOWNLOAD] lock занят — выход")
+        if self._synthesis_busy:
             self.status_bar.showMessage("Синтез уже выполняется")
             return
 
-        self.logger.info("[DOWNLOAD] lock взят")
-
         text = self.text_editor.get_text()
         if not text.strip():
-            self.logger.warning("[DOWNLOAD] текст пустой — выход")
-            self._synthesis_lock.release()
             self.tts_controls.enable_buttons()
             return
 
         self.status_bar.showMessage("Синтез для сохранения...")
         speed = self.tts_controls.get_speed()
         sentences = self._split_sentences(text)
-        self.logger.info(f"[DOWNLOAD] старт синтеза, {len(sentences)} предложений")
+        self._synthesis_busy = True
+        self.tts_controls.disable_buttons()
 
-        def task():
-            audio_parts = []
-            try:
-                for i, s in enumerate(sentences):
-                    a = self.tts_engine.synthesize(s, speed)
-                    if a is not None:
-                        audio_parts.append(a)
+        # QThread: синтез в фоне, диалог сохранения открывается в UI-потоке
+        self._save_worker = SynthesizeSaveWorker(self.tts_engine, sentences, speed, parent=self)
+        self._save_worker.audio_ready.connect(self._on_download_ready)
+        self._save_worker.error.connect(self._on_save_error)
+        self._save_worker.start()
 
-                if not audio_parts:
-                    self.logger.warning("[DOWNLOAD] нет аудио — выход")
-                    QTimer.singleShot(0, lambda: self.status_bar.showMessage("Ошибка синтеза"))
-                    return
-
-                import numpy as np
-                audio = np.concatenate(audio_parts) if len(audio_parts) > 1 else audio_parts[0]
-                self.logger.info(f"[DOWNLOAD] аудио собрано, длина: {len(audio)} сэмплов")
-
-                # Передаём аудио в главный поток для диалога
-                self._download_ready_signal.emit(audio)
-            except Exception as e:
-                self.logger.error(f"[DOWNLOAD] ошибка: {e}", exc_info=True)
-                QTimer.singleShot(0, lambda: self.status_bar.showMessage("Ошибка синтеза"))
-                QTimer.singleShot(0, self.tts_controls.enable_buttons)
-                try:
-                    self._synthesis_lock.release()
-                except RuntimeError:
-                    pass
-
-        threading.Thread(target=task, daemon=True).start()
+    def _on_save_error(self, message: str):
+        self.logger.error(f"[DOWNLOAD] ошибка: {message}")
+        if message != "Отменено":
+            self.status_bar.showMessage("Ошибка синтеза")
+        self.tts_controls.enable_buttons()
+        self._synthesis_busy = False
 
     def _on_download_ready(self, audio):
         """Вызывается в главном потоке после синтеза. Открывает диалог сохранения."""
@@ -503,13 +530,9 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Ошибка сохранения")
                 QMessageBox.warning(self, "Ошибка", "Не удалось сохранить файл")
         finally:
-            # Отпускаем lock и включаем кнопки
+            # Включаем кнопки и освобождаем флаг занятости
             self.tts_controls.enable_buttons()
-            try:
-                self._synthesis_lock.release()
-                self.logger.info("[DOWNLOAD] lock отпущен")
-            except RuntimeError:
-                pass
+            self._synthesis_busy = False
 
     # ---------- Настройки ----------
 
@@ -533,6 +556,9 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.warning(f"Не удалось установить зум: {e}")
 
+        # Панель формата — синхронизируем с редактором после загрузки его настроек
+        self._sync_format_bar()
+
     def closeEvent(self, event):
         settings = QSettings("FreeTalk", "App")
         try:
@@ -540,8 +566,32 @@ class MainWindow(QMainWindow):
             settings.setValue("zoom", self.zoom_slider.get_value())
         except Exception:
             pass
+        # Форсируем сохранение текста/формата редактора
+        try:
+            self.text_editor.save_settings()
+        except Exception:
+            pass
+        # Форсируем обучение словаря на недообработанном тексте
+        try:
+            if hasattr(self, "_learn_timer") and self._learn_timer.isActive():
+                self._learn_timer.stop()
+                self._flush_t9_learning()
+        except Exception:
+            pass
 
-        self._stop_current.set()
+        # Останавливаем все QThread-воркеры корректно
+        for worker in (self._model_worker, self._play_worker, self._save_worker):
+            if worker is not None and worker.isRunning():
+                try:
+                    if hasattr(worker, "cancel"):
+                        worker.cancel()
+                    elif hasattr(worker, "stop"):
+                        worker.stop()
+                    worker.requestInterruption()
+                    worker.wait(2000)
+                except Exception:
+                    pass
+
         if self.audio_player:
             try:
                 self.audio_player.cleanup()
