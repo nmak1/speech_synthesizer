@@ -2,11 +2,17 @@
 import sys
 import os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# Корень проекта в sys.path (для импорта пакета src как в dev, так и в frozen)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QPixmap
+
+from src.paths import find_resource
+from src.version import __version__, APP_USER_MODEL_ID
 
 
 def main():
@@ -19,30 +25,20 @@ def main():
     app.setApplicationName("FreeTalk")
     app.setOrganizationName("FreeTalk")
 
+    # Иконка — через единый резолвер ресурсов (src/paths.py)
     icon = QIcon()
-    icon_paths = [
-        "imeg/logo.ico",
-        "logo.ico",
-        "imeg/logo.png",
-        "logo.png",
-        os.path.join(os.path.dirname(sys.executable), "imeg", "logo.ico"),
-        os.path.join(os.path.dirname(sys.executable), "logo.ico"),
-    ]
-    for path in icon_paths:
-        if os.path.exists(path):
-            pixmap = QPixmap(path)
-            if not pixmap.isNull():
-                for size in [16, 32, 48, 64, 128, 256]:
-                    icon.addPixmap(pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                break
+    icon_path = find_resource("imeg/logo.ico", "logo.ico", "imeg/logo.png", "logo.png")
+    if icon_path:
+        pixmap = QPixmap(icon_path)
+        if not pixmap.isNull():
+            for size in [16, 32, 48, 64, 128, 256]:
+                icon.addPixmap(pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
     if not icon.isNull():
         app.setWindowIcon(icon)
 
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "freetalk.synthesizer.version2.0"
-        )
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
     except Exception:
         pass
 
@@ -51,7 +47,7 @@ def main():
     from src.gui.main_window import MainWindow
 
     logger = setup_logger()
-    logger.info("Запуск приложения 'Free Talk' v2.0.0")
+    logger.info(f"Запуск приложения 'Free Talk' v{__version__}")
 
     config_manager = ConfigManager()
     config = config_manager.load_config()

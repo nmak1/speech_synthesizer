@@ -8,13 +8,14 @@ from datetime import datetime
 
 
 def setup_logger(name: str = "VoiceSynthesizer") -> logging.Logger:
-    """Настройка и возврат логгера"""
-    # Создаем папку для логов
-    log_dir = os.path.join(
-        os.path.expanduser("~"),
-        ".voicesynthesizer",
-        "logs"
-    )
+    """Настройка и возврат логгера.
+
+    Логи пишутся в единый каталог данных приложения (src/paths.user_data_root),
+    а не в отдельную ~/.voicesynthesizer — все пути проекта унифицированы.
+    """
+    from src.paths import data_path  # локальный импорт, чтобы избежать цикла
+
+    log_dir = data_path("logs")
     os.makedirs(log_dir, exist_ok=True)
 
     # Имя файла лога с датой
