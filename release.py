@@ -5,7 +5,9 @@ import glob
 import shutil
 import subprocess
 
-VERSION = "2.0.0"
+# Единый источник версии — src/version.py
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.version import __version__ as VERSION
 
 
 def clean():
