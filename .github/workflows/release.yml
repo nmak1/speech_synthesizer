@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pyinstaller pillow
+
+      - name: Download TTS model (if missing)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path data/models | Out-Null
+          if (-not (Test-Path data/models/v3_1_ru.pt)) {
+            Invoke-WebRequest -Uri "https://github.com/snakers4/silero-models/raw/master/models/silero_v3_1_ru.pt" -OutFile "data/models/v3_1_ru.pt"
+          }
+
+      - name: Build EXE
+        run: pyinstaller FreeTalk.spec --clean --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeTalk-portable-${{ github.ref_name }}
+          path: dist/FreeTalk.exe
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FreeTalk-portable-${{ github.ref_name }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FreeTalk.exe
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -114,7 +114,14 @@ def build_installer():
         print("  [ERROR] Inno Setup не найден")
         return False
 
-    result = subprocess.run([iscc, "installers/setup.iss"], capture_output=True, text=True)
+    # Версия передаётся из src/version.py — в setup.iss править не нужно
+    result = subprocess.run(
+        [iscc, f"/Dver={VERSION}", "installers/setup.iss"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr)
 
     expected = f"installers/FreeTalk_Setup_v{VERSION}.exe"
     if os.path.exists(expected):
@@ -139,8 +146,7 @@ def git_commit():
     try:
         subprocess.run(["git", "add", "-A"], check=True)
         subprocess.run(
-            ["git", "commit", "-m",
-             f"Release v{VERSION}: оптимизация синтеза, крупные элементы UI, улучшенный T9"],
+            ["git", "commit", "-m", f"Release v{VERSION}"],
             check=False,
         )
         subprocess.run(

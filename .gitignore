@@ -56,3 +56,5 @@ desktop.ini
 # ---------- Release archives ----------
 FreeTalk_v*/
 *.zip
+# ---------- Large binaries / old releases ----------
+!installers/logo.ico

@@ -23,9 +23,11 @@ jobs:
       - name: Install system deps (Qt offscreen)
         run: |
           sudo apt-get update
+          # libgl1-mesa-glx упразднён в Ubuntu 24.04 (noble) — заменён на libgl1
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libgl1-mesa-glx
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libgl1 \
+            libegl1 libglib2.0-0t64
 
       - name: Install dependencies
         run: |
