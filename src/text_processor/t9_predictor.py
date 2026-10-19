@@ -127,7 +127,12 @@ class T9Predictor:
             return False
 
     def predict(self, prefix: str, max_suggestions: int = 5) -> List[str]:
-        """Предсказание слов по префиксу"""
+        """Предсказание слов по префиксу.
+
+        Точное совпадение (сам префикс как слово) исключается из выдачи —
+        предсказание должно предлагать продолжения слова, а не повторять
+        уже набранное.
+        """
         if not prefix or len(prefix) < 1:
             return []
 
@@ -135,13 +140,12 @@ class T9Predictor:
 
         # Поиск слов с данным префиксом
         if prefix_lower in self.word_prefixes:
-            candidates = self.word_prefixes[prefix_lower]
+            candidates = {w for w in self.word_prefixes[prefix_lower] if w != prefix_lower}
 
-            # Сортировка по частоте использования и длине слова
+            # Сортировка по частоте использования, затем по алфавиту.
             sorted_candidates = sorted(
                 candidates,
-                key=lambda w: (self.word_frequency.get(w, 0), -len(w)),
-                reverse=True
+                key=lambda w: (-self.word_frequency.get(w, 0), w)
             )
 
             # Возвращаем уникальные результаты
@@ -162,15 +166,52 @@ class T9Predictor:
         self.save_dictionary()
 
     def update_frequency(self, word: str):
-        """Обновление частоты использования слова"""
-        word_lower = word.lower()
+        """Обновление частоты использования слова (инкремент +1)."""
+        word_lower = word.lower().strip()
+        if not word_lower:
+            return
         if word_lower in self.word_frequency:
             self.word_frequency[word_lower] += 1
         else:
             self.word_frequency[word_lower] = 1
-            self._update_prefix_index()
+            # Инкрементальное обновление индекса вместо полной перестройки
+            for i in range(1, len(word_lower) + 1):
+                self.word_prefixes[word_lower[:i]].add(word_lower)
 
         self.save_dictionary()
+
+    # ---------- Динамическое обучение ----------
+
+    _WORD_SPLIT_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+    _LEARN_MIN_LEN = 2       # однобуквенные не учим (шум от опечаток)
+    _LEARN_MAX_LEN = 30
+
+    def learn_from_text(self, text: str):
+        """Динамическое обучение словаря по набранному тексту.
+
+        Каждое слово из текста увеличивает частоту на 1. Вызывается
+        пакетно (см. TextEditor/T9Predictor.should_learn), чтобы не писать
+        на диск при каждом нажатии клавиши.
+        """
+        if not text:
+            return
+        words = self._WORD_SPLIT_RE.findall(text.lower())
+        changed = False
+        for w in words:
+            if not (self._LEARN_MIN_LEN <= len(w) <= self._LEARN_MAX_LEN):
+                continue
+            self.word_frequency[w] += 1
+            for i in range(1, len(w) + 1):
+                self.word_prefixes[w[:i]].add(w)
+            changed = True
+        if changed:
+            self.save_dictionary()
+
+    def learn_word(self, word: str):
+        """Обучение на одном слове (используется при выборе подсказки T9)."""
+        w = (word or "").lower().strip()
+        if self._LEARN_MIN_LEN <= len(w) <= self._LEARN_MAX_LEN:
+            self.update_frequency(w)
 
     def get_word_frequency(self, word: str) -> int:
         return self.word_frequency.get(word.lower(), 0)

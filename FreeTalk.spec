@@ -3,7 +3,9 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('src', 'src'), ('data/models/v3_1_ru.pt', 'data/models'), ('data/dictionaries/t9_dictionary.json', 'data/dictionaries'), ('imeg', 'imeg'), ('logo.ico', '.')]
 binaries = []
-hiddenimports = ['torch', 'torchaudio', 'soundfile']
+# src.paths / src.version / src.workers импортируются динамически или критичны
+# для единого источника путей/версии и QThread-воркеров — фиксируем явно.
+hiddenimports = ['torch', 'torchaudio', 'soundfile', 'src.paths', 'src.version', 'src.workers']
 tmp_ret = collect_all('torch')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torchaudio')

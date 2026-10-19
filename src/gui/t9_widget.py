@@ -18,7 +18,9 @@ class T9Widget(QWidget):
     def __init__(self, config, on_word_selected=None):
         super().__init__()
         self.config = config
-        self.enabled = config.t9_enabled
+        # Состояние берём из конфига; если кнопки нет в интерфейсе — T9 выключен
+        show_btn = getattr(config, "t9_show_button", False)
+        self.enabled = bool(getattr(config, "t9_enabled", False)) and show_btn
         self.suggestions = []
 
         if on_word_selected:
@@ -35,7 +37,7 @@ class T9Widget(QWidget):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(self.SPACING)
 
-        # Кнопка T9
+        # Кнопка T9 (скрыта по умолчанию — решение пользователя: кнопка не работала)
         self.toggle_btn = QPushButton("T9")
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.setChecked(self.enabled)
@@ -59,7 +61,11 @@ class T9Widget(QWidget):
                 background-color: #e0e0e0;
             }
         """)
-        self.toggle_btn.clicked.connect(self.toggle_t9)
+        # usedFromUser=True: toggled срабатывает только на реальный клик мыши,
+        # программный setChecked() не вызывает слот (исправление рассинхronа)
+        self.toggle_btn.toggled.connect(self._on_toggle_clicked)
+        show_btn = getattr(self.config, "t9_show_button", False)
+        self.toggle_btn.setVisible(show_btn)
         top_layout.addWidget(self.toggle_btn)
 
         # Кнопки пунктуации
@@ -131,11 +137,26 @@ class T9Widget(QWidget):
     # ---------- Логика ----------
 
     def on_punctuation_clicked(self, punctuation: str):
-        """Вставляем знак препинания."""
+        """Вставляем знак препинания (как отдельное 'слово')."""
         self.word_selected.emit(punctuation)
+
+    def _on_toggle_clicked(self, checked):
+        """Слот сигнала toggled — реагируем только на реальный клик мыши.
+
+        usedFromUser == True устанавливается Qt только при переключении
+        пользователем; программный setChecked() даёт False/None.
+        """
+        sender = self.sender()
+        if isinstance(sender, QPushButton) and not sender.property("usedFromUser"):
+            return
+        self.toggle_t9(checked)
 
     def toggle_t9(self, checked):
         self.enabled = checked
+        try:
+            self.config.t9_enabled = checked
+        except Exception:
+            pass
         if not checked:
             self.update_suggestions([])
         else:

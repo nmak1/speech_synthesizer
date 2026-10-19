@@ -1,7 +1,9 @@
 # requirements.txt
-PyQt5==5.15.9
-torch==2.5.0
-torchaudio==2.5.0
+# Версии зафиксированы и совпадают с CI (.github/workflows/ci.yml, Python 3.12).
+# Для разработки/тестов дополнительно: pip install -r requirements-dev.txt
+PyQt5==5.15.11
+torch==2.7.1
+torchaudio==2.7.1
 numpy==1.26.4
 sounddevice==0.4.7
 soundfile==0.12.1
@@ -9,4 +11,4 @@ nltk==3.8.1
 pyphen==0.15.0
 requests==2.32.0
 pyinstaller==6.10.0
-pywin32==311
+pywin32==311; sys_platform == "win32"
