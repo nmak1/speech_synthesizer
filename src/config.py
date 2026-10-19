@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List
 
 from src.version import __version__
-from src.paths import data_path
+from src.paths import data_path, resource_path
 
 
 @dataclass
@@ -14,8 +14,8 @@ class Config:
     # Версия приложения (единый источник — src/version.py)
     app_version: str = __version__
 
-    # TTS настройки
-    model_path: str = "data/models/v3_1_ru.pt"
+    # TTS настройки (абсолютный путь через единый модуль src/paths.py)
+    model_path: str = field(default_factory=lambda: resource_path("data/models/v3_1_ru.pt"))
     sample_rate: int = 48000
     default_voice: str = "aidar"
     default_speed: float = 1.0

@@ -3,6 +3,54 @@
 Все значимые изменения проекта документируются в этом файле.
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/).
 
+## [2.1.0] - 2026-10-19
+
+### ✨ Новое
+- **Панель форматирования текста** (`src/gui/format_bar.py`): выбор шрифта
+  (Arial, Times New Roman, Georgia, Courier New, Calibri и системные),
+  размера, цвета (8 пресетов + диалог выбора), жирный/курсив. Настройки
+  применяются к выделению или всему тексту, сохраняются в QSettings.
+- **Динамическое обучение словаря T9**: новые слова из редактора
+  автоматически добавляются в словарь с приоритетом; отдельная кнопка
+  «Обучить» больше не нужна.
+- **Горячие клавиши**: `Ctrl+Enter` — озвучить, `Ctrl+S` — скачать WAV,
+  `Ctrl+Z/Y` — отмена/повтор, `Ctrl+B/I/U` — стиль, `Ctrl+=/-/0` — масштаб,
+  `Esc` — остановить воспроизведение.
+- **CI GitHub Actions** (`.github/workflows/ci.yml`): pytest на ubuntu-latest
+  (offscreen Qt) при каждом push/PR + smoke-проверка на windows-latest для main.
+
+### 🐛 Исправлено
+- **Кнопка T9**: вставка знаков препинания больше не удаляла набранное слово
+  (логика word-boundary); кнопка скрыта из интерфейса по умолчанию
+  (`t9_show_button=False`, включается в настройках).
+- **Сортировка предсказаний T9** в `predict()` — частотный порядок восстановлен.
+- **Безопасность потоков**: все фоновые операции (загрузка модели, синтез,
+  сохранение) переведены с `threading.Thread` на `QThread`-воркеры
+  (`src/workers.py`); взаимодействие с UI только через сигналы — устранены
+  гонки и случайные падения в Windows.
+
+### 🔧 Улучшения
+- **Единый источник путей** (`src/paths.py`): ресурсы корректно находятся и в
+  исходниках, и в PyInstaller-сборке; относительные пути заменены везде.
+- **Единый источник версии** (`src/version.py` = 2.1.0): config, main, release
+  и CI берут версию оттуда.
+- `FreeTalk.spec`: в `hiddenimports` добавлены `src.paths`, `src.version`,
+  `src.workers`.
+
+### 🧪 Тесты
+- Внедрён **pytest-qt**: `tests/conftest.py` (фикстуры `tmp_config`,
+  `isolated_settings`), `tests/test_t9_predictor.py` (13 тестов логики T9),
+  `tests/test_gui_widgets.py` (20 GUI-тестов: TextEditor, FormatBar,
+  T9Widget, хоткеи MainWindow; torch/аудио мокаются). Итого 33 теста,
+  запуск: `pip install -r requirements-dev.txt && pytest`.
+- `pytest.ini` с `qt_api=pyqt5`; `requirements-dev.txt` (pytest==8.3.3,
+  pytest-qt==4.4.0).
+
+### 📦 Зависимости
+- Версии в `requirements.txt` приведены к фактически используемым:
+  PyQt5 5.15.9→5.15.11, torch/torchaudio 2.5.0→2.7.1; `pywin32` помечен
+  как Windows-only (`sys_platform == "win32"`).
+
 ## [2.0.0] - 2026-09-23
 
 ### 🚀 Производительность

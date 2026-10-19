@@ -127,7 +127,12 @@ class T9Predictor:
             return False
 
     def predict(self, prefix: str, max_suggestions: int = 5) -> List[str]:
-        """Предсказание слов по префиксу"""
+        """Предсказание слов по префиксу.
+
+        Точное совпадение (сам префикс как слово) исключается из выдачи —
+        предсказание должно предлагать продолжения слова, а не повторять
+        уже набранное.
+        """
         if not prefix or len(prefix) < 1:
             return []
 
@@ -135,13 +140,12 @@ class T9Predictor:
 
         # Поиск слов с данным префиксом
         if prefix_lower in self.word_prefixes:
-            candidates = self.word_prefixes[prefix_lower]
+            candidates = {w for w in self.word_prefixes[prefix_lower] if w != prefix_lower}
 
-            # Сортировка по частоте использования и длине слова
+            # Сортировка по частоте использования, затем по алфавиту.
             sorted_candidates = sorted(
                 candidates,
-                key=lambda w: (self.word_frequency.get(w, 0), -len(w)),
-                reverse=True
+                key=lambda w: (-self.word_frequency.get(w, 0), w)
             )
 
             # Возвращаем уникальные результаты
